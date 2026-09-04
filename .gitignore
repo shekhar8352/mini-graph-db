@@ -1,0 +1,7 @@
+/graphdb
+/graph.db
+/graph.wal
+/graph.history
+*.db
+*.wal
+*.history
