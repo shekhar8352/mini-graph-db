@@ -2,6 +2,8 @@ package graph
 
 import (
 	"testing"
+
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 )
 
 func TestAddGetUpdateDeleteNode(t *testing.T) {
@@ -31,6 +33,8 @@ func TestAddGetUpdateDeleteNode(t *testing.T) {
 	}
 	if err := g.DeleteNode(1); err == nil {
 		t.Fatal("expected delete of missing node to fail")
+	} else if !gerr.IsCode(err, gerr.NotFound) {
+		t.Fatalf("expected NotFound, got %v", err)
 	}
 }
 

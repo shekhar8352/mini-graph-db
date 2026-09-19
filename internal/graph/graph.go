@@ -1,8 +1,11 @@
+// Package graph is an in-memory directed property-graph engine.
 package graph
 
 import (
 	"fmt"
 	"sync"
+
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 )
 
 // Node is a labeled vertex with arbitrary key-value properties.
@@ -98,7 +101,7 @@ func (g *Graph) UpdateNode(id uint64, props map[string]any) (Node, error) {
 
 	n, ok := g.nodes[id]
 	if !ok {
-		return Node{}, fmt.Errorf("node %d not found", id)
+		return Node{}, gerr.Newf(gerr.NotFound, "node %d not found", id)
 	}
 	g.unindexNode(n)
 	for k, v := range props {
@@ -115,7 +118,7 @@ func (g *Graph) DeleteNode(id uint64) error {
 
 	n, ok := g.nodes[id]
 	if !ok {
-		return fmt.Errorf("node %d not found", id)
+		return gerr.Newf(gerr.NotFound, "node %d not found", id)
 	}
 
 	incident := uniqueIDs(append(append([]uint64{}, g.outEdges[id]...), g.inEdges[id]...))
@@ -135,10 +138,10 @@ func (g *Graph) AddEdge(from, to uint64, label string, props map[string]any) (Ed
 	defer g.mu.Unlock()
 
 	if _, ok := g.nodes[from]; !ok {
-		return Edge{}, fmt.Errorf("from node %d not found", from)
+		return Edge{}, gerr.Newf(gerr.NotFound, "from node %d not found", from)
 	}
 	if _, ok := g.nodes[to]; !ok {
-		return Edge{}, fmt.Errorf("to node %d not found", to)
+		return Edge{}, gerr.Newf(gerr.NotFound, "to node %d not found", to)
 	}
 
 	e := &Edge{
@@ -173,7 +176,7 @@ func (g *Graph) UpdateEdge(id uint64, props map[string]any) (Edge, error) {
 
 	e, ok := g.edges[id]
 	if !ok {
-		return Edge{}, fmt.Errorf("edge %d not found", id)
+		return Edge{}, gerr.Newf(gerr.NotFound, "edge %d not found", id)
 	}
 	for k, v := range props {
 		e.Props[k] = v
@@ -186,7 +189,7 @@ func (g *Graph) DeleteEdge(id uint64) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if _, ok := g.edges[id]; !ok {
-		return fmt.Errorf("edge %d not found", id)
+		return gerr.Newf(gerr.NotFound, "edge %d not found", id)
 	}
 	g.deleteEdgeLocked(id)
 	return nil
@@ -263,10 +266,10 @@ func (g *Graph) EdgesBetween(from, to uint64) ([]Edge, error) {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	if _, ok := g.nodes[from]; !ok {
-		return nil, fmt.Errorf("node %d not found", from)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", from)
 	}
 	if _, ok := g.nodes[to]; !ok {
-		return nil, fmt.Errorf("node %d not found", to)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", to)
 	}
 	var out []Edge
 	for _, eid := range g.outEdges[from] {
