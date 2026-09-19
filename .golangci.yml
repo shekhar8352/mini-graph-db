@@ -1,0 +1,33 @@
+version: "2"
+
+# golangci-lint v2: gosimple is part of staticcheck (S-series checks).
+# gofmt and goimports are formatters, not linters.
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - revive
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/shekhar8352/mini-graph-db
