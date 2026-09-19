@@ -1,7 +1,19 @@
+# Binary
 /graphdb
+/bin/
+
+# Default and globbed data files
 /graph.db
 /graph.wal
 /graph.history
 *.db
 *.wal
 *.history
+
+# Default data directory (see --data-dir)
+/data/
+
+# Coverage
+/cover.out
+/coverage.html
+/coverage.out
