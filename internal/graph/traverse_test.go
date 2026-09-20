@@ -1,6 +1,10 @@
 package graph
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+)
 
 func chain(t *testing.T) *Graph {
 	t.Helper()
@@ -87,8 +91,20 @@ func TestTraversalMissingNode(t *testing.T) {
 	g := New()
 	if _, err := g.Neighbors(9, 1); err == nil {
 		t.Fatal("expected missing start")
+	} else if !gerr.IsCode(err, gerr.NotFound) {
+		t.Fatalf("expected NotFound, got %v", err)
 	}
 	if _, err := g.ShortestPath(1, 2); err == nil {
 		t.Fatal("expected missing src")
+	} else if !gerr.IsCode(err, gerr.NotFound) {
+		t.Fatalf("expected NotFound, got %v", err)
+	}
+}
+
+func TestNeighborsInvalidDepth(t *testing.T) {
+	g := New()
+	g.AddNode("n", nil)
+	if _, err := g.Neighbors(1, 0); !gerr.IsCode(err, gerr.InvalidArgument) {
+		t.Fatalf("expected InvalidArgument, got %v", err)
 	}
 }

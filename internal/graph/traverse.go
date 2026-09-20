@@ -1,6 +1,8 @@
 package graph
 
-import "fmt"
+import (
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+)
 
 // Neighbor is a node reached during a bounded traversal, with its hop distance.
 type Neighbor struct {
@@ -13,14 +15,14 @@ type Neighbor struct {
 // Depth must be at least 1.
 func (g *Graph) Neighbors(start uint64, depth int) ([]Neighbor, error) {
 	if depth < 1 {
-		return nil, fmt.Errorf("depth must be >= 1")
+		return nil, gerr.New(gerr.InvalidArgument, "depth must be >= 1")
 	}
 
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	if _, ok := g.nodes[start]; !ok {
-		return nil, fmt.Errorf("node %d not found", start)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", start)
 	}
 
 	type item struct {
@@ -62,14 +64,14 @@ func (g *Graph) Neighbors(start uint64, depth int) ([]Neighbor, error) {
 // up to the given depth. The start node itself is omitted.
 func (g *Graph) DFS(start uint64, depth int) ([]Neighbor, error) {
 	if depth < 1 {
-		return nil, fmt.Errorf("depth must be >= 1")
+		return nil, gerr.New(gerr.InvalidArgument, "depth must be >= 1")
 	}
 
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 
 	if _, ok := g.nodes[start]; !ok {
-		return nil, fmt.Errorf("node %d not found", start)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", start)
 	}
 
 	seen := map[uint64]struct{}{start: {}}
@@ -109,10 +111,10 @@ func (g *Graph) ShortestPath(src, dst uint64) ([]Node, error) {
 	defer g.mu.RUnlock()
 
 	if _, ok := g.nodes[src]; !ok {
-		return nil, fmt.Errorf("node %d not found", src)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", src)
 	}
 	if _, ok := g.nodes[dst]; !ok {
-		return nil, fmt.Errorf("node %d not found", dst)
+		return nil, gerr.Newf(gerr.NotFound, "node %d not found", dst)
 	}
 	if src == dst {
 		return []Node{g.nodes[src].clone()}, nil
