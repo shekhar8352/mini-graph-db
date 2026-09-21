@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/graph"
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {
@@ -75,6 +75,24 @@ func TestWALAppendReadTruncate(t *testing.T) {
 	lines, err = ReadWAL(path)
 	if err != nil || len(lines) != 0 {
 		t.Fatalf("truncated wal: %v %v", lines, err)
+	}
+}
+
+func TestOpenWALCreatesParentDir(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nested", "dir", "graph.wal")
+	w, err := OpenWAL(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Append(`CREATE NODE person {name: "A"}`); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := ReadWAL(path)
+	if err != nil || len(lines) != 1 {
+		t.Fatalf("lines=%v err=%v", lines, err)
 	}
 }
 

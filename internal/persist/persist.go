@@ -1,3 +1,4 @@
+// Package persist stores gob snapshots and a text write-ahead log.
 package persist
 
 import (
@@ -8,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/graph"
 )
 
 func init() {
@@ -61,7 +62,7 @@ func Save(g *graph.Graph, path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	snap := g.Export()
 	enc := encodedSnapshot{
@@ -83,7 +84,7 @@ func Load(g *graph.Graph, path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var enc encodedSnapshot
 	if err := gob.NewDecoder(f).Decode(&enc); err != nil {
@@ -151,6 +152,11 @@ type WAL struct {
 
 // OpenWAL appends to path, creating the file if needed.
 func OpenWAL(path string) (*WAL, error) {
+	if dir := filepath.Dir(path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|os.O_APPEND, 0o644)
 	if err != nil {
 		return nil, err
@@ -158,8 +164,10 @@ func OpenWAL(path string) (*WAL, error) {
 	return &WAL{path: path, f: f}, nil
 }
 
+// Path returns the WAL file path.
 func (w *WAL) Path() string { return w.path }
 
+// Append writes one statement line and fsyncs.
 func (w *WAL) Append(stmt string) error {
 	if w == nil || w.f == nil {
 		return nil
@@ -174,6 +182,7 @@ func (w *WAL) Append(stmt string) error {
 	return w.f.Sync()
 }
 
+// Truncate discards every logged statement.
 func (w *WAL) Truncate() error {
 	if w == nil || w.f == nil {
 		return nil
@@ -185,6 +194,7 @@ func (w *WAL) Truncate() error {
 	return err
 }
 
+// Close closes the underlying file.
 func (w *WAL) Close() error {
 	if w == nil || w.f == nil {
 		return nil
@@ -201,7 +211,7 @@ func ReadWAL(path string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var lines []string
 	sc := bufio.NewScanner(f)

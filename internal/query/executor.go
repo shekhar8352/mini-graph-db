@@ -5,8 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"mini-graph-db/internal/graph"
-	"mini-graph-db/internal/persist"
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/persist"
 )
 
 // Result is the outcome of executing a statement.
@@ -28,6 +29,7 @@ type Executor struct {
 	WAL *persist.WAL
 }
 
+// NewExecutor binds a graph and optional WAL.
 func NewExecutor(g *graph.Graph, wal *persist.WAL) *Executor {
 	return &Executor{G: g, WAL: wal}
 }
@@ -51,6 +53,7 @@ func (e *Executor) ExecString(line string, replay bool) (Result, error) {
 	return res, nil
 }
 
+// Exec runs a parsed statement.
 func (e *Executor) Exec(stmt Stmt) (Result, error) {
 	switch s := stmt.(type) {
 	case CreateNodeStmt:
@@ -157,13 +160,13 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 	case GetNodeStmt:
 		n, ok := e.G.GetNode(s.ID)
 		if !ok {
-			return Result{}, fmt.Errorf("node %d not found", s.ID)
+			return Result{}, gerr.Newf(gerr.NotFound, "node %d not found", s.ID)
 		}
 		return Result{Kind: "nodes", Nodes: []graph.Node{n}, Message: fmt.Sprintf("node %d", n.ID)}, nil
 	case GetEdgeStmt:
 		ed, ok := e.G.GetEdge(s.ID)
 		if !ok {
-			return Result{}, fmt.Errorf("edge %d not found", s.ID)
+			return Result{}, gerr.Newf(gerr.NotFound, "edge %d not found", s.ID)
 		}
 		return Result{Kind: "edges", Edges: []graph.Edge{ed}, Message: fmt.Sprintf("edge %d", ed.ID)}, nil
 	case DeleteNodeStmt:
@@ -205,7 +208,7 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 		}
 		return Result{Kind: "message", Message: "loaded " + s.Path}, nil
 	default:
-		return Result{}, fmt.Errorf("unhandled statement")
+		return Result{}, gerr.New(gerr.Internal, "unhandled statement")
 	}
 }
 
