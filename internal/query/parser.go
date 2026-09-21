@@ -1,16 +1,21 @@
 package query
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 )
 
+// Parser is a one-lookahead recursive-descent parser.
 type Parser struct {
 	lx  *Lexer
 	cur Token
 }
 
+// Parse lexes and parses one statement from src.
 func Parse(src string) (Stmt, error) {
 	p := &Parser{lx: NewLexer(src)}
 	p.advance()
@@ -18,10 +23,10 @@ func Parse(src string) (Stmt, error) {
 		return nil, errOf(p.cur)
 	}
 	if p.cur.Type == TokenEOF {
-		return nil, fmt.Errorf("empty statement")
+		return nil, gerr.New(gerr.Syntax, "empty statement")
 	}
 	if p.cur.Type != TokenIdent {
-		return nil, fmt.Errorf("expected command, got %s", p.cur.Type)
+		return nil, gerr.Newf(gerr.Syntax, "expected command, got %s", p.cur.Type)
 	}
 	kw := strings.ToUpper(p.cur.Lexeme)
 	p.advance()
@@ -56,15 +61,23 @@ func Parse(src string) (Stmt, error) {
 	case "LOAD":
 		stmt, err = p.parseLoad()
 	default:
-		return nil, fmt.Errorf("unknown command %q", kw)
+		return nil, gerr.Newf(gerr.Syntax, "unknown command %q", kw)
 	}
 	if err != nil {
-		return nil, err
+		return nil, asSyntax(err)
 	}
 	if p.cur.Type != TokenEOF {
-		return nil, fmt.Errorf("unexpected token %s %q", p.cur.Type, p.cur.Lexeme)
+		return nil, gerr.Newf(gerr.Syntax, "unexpected token %s %q", p.cur.Type, p.cur.Lexeme)
 	}
 	return stmt, nil
+}
+
+func asSyntax(err error) error {
+	var ge *gerr.Error
+	if errors.As(err, &ge) {
+		return err
+	}
+	return gerr.Wrap(gerr.Syntax, "", err)
 }
 
 func (p *Parser) parseCreate() (Stmt, error) {
@@ -458,7 +471,7 @@ func (p *Parser) advance() {
 
 func errOf(t Token) error {
 	if e, ok := t.Literal.(error); ok {
-		return e
+		return gerr.Wrap(gerr.Syntax, "", e)
 	}
-	return fmt.Errorf("lex error at %d", t.Pos)
+	return gerr.Newf(gerr.Syntax, "lex error at %d", t.Pos)
 }

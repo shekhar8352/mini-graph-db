@@ -4,8 +4,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mini-graph-db/internal/graph"
-	"mini-graph-db/internal/persist"
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/persist"
 )
 
 func TestParseTable(t *testing.T) {
@@ -185,6 +186,8 @@ func TestExecCRUDAndMatch(t *testing.T) {
 
 	if _, err := e.ExecString(`GET NODE 99`, false); err == nil {
 		t.Fatal("expected missing node error")
+	} else if !gerr.IsCode(err, gerr.NotFound) {
+		t.Fatalf("expected NotFound, got %v", err)
 	}
 
 	mustExec(t, e, `DELETE NODE 1`)
@@ -247,6 +250,17 @@ func TestWALReplay(t *testing.T) {
 func TestLexerErrors(t *testing.T) {
 	if _, err := Parse(`CREATE NODE x {name: "unterminated}`); err == nil {
 		t.Fatal("expected unterminated string")
+	} else if !gerr.IsCode(err, gerr.Syntax) {
+		t.Fatalf("expected Syntax, got %v", err)
+	}
+}
+
+func TestParseSyntaxCode(t *testing.T) {
+	if _, err := Parse(""); !gerr.IsCode(err, gerr.Syntax) {
+		t.Fatalf("empty: %v", err)
+	}
+	if _, err := Parse("FLORB"); !gerr.IsCode(err, gerr.Syntax) {
+		t.Fatalf("unknown: %v", err)
 	}
 }
 

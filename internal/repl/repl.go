@@ -1,3 +1,4 @@
+// Package repl is the embedded interactive shell.
 package repl
 
 import (
@@ -5,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"sort"
 	"strings"
@@ -12,9 +14,9 @@ import (
 
 	"github.com/peterh/liner"
 
-	"mini-graph-db/internal/graph"
-	"mini-graph-db/internal/persist"
-	"mini-graph-db/internal/query"
+	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/persist"
+	"github.com/shekhar8352/mini-graph-db/internal/query"
 )
 
 // Config controls snapshot/WAL recovery for a REPL session.
@@ -41,6 +43,7 @@ func Run(cfg Config) error {
 			if err := persist.Load(g, cfg.DBPath); err != nil {
 				return fmt.Errorf("load snapshot: %w", err)
 			}
+			slog.Info("loaded snapshot", "path", cfg.DBPath)
 			fmt.Fprintf(cfg.Out, "loaded snapshot %s\n", cfg.DBPath)
 		}
 	}
@@ -52,7 +55,7 @@ func Run(cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("open wal: %w", err)
 		}
-		defer wal.Close()
+		defer func() { _ = wal.Close() }()
 	}
 
 	exec := query.NewExecutor(g, wal)
@@ -68,6 +71,7 @@ func Run(cfg Config) error {
 			}
 		}
 		if len(lines) > 0 {
+			slog.Info("replayed wal", "path", cfg.WALPath, "statements", len(lines))
 			fmt.Fprintf(cfg.Out, "replayed %d wal statement(s)\n", len(lines))
 		}
 	}
@@ -89,7 +93,7 @@ func isTerminal(in io.Reader) bool {
 
 func runLineEditor(cfg Config, exec *query.Executor) error {
 	ed := liner.NewLiner()
-	defer ed.Close()
+	defer func() { _ = ed.Close() }()
 	ed.SetCtrlCAborts(true)
 	ed.SetMultiLineMode(false)
 	ed.SetTabCompletionStyle(liner.TabPrints)
@@ -98,7 +102,7 @@ func runLineEditor(cfg Config, exec *query.Executor) error {
 	if cfg.HistoryPath != "" {
 		if f, err := os.Open(cfg.HistoryPath); err == nil {
 			_, _ = ed.ReadHistory(f)
-			f.Close()
+			_ = f.Close()
 		}
 	}
 
@@ -123,13 +127,14 @@ func runLineEditor(cfg Config, exec *query.Executor) error {
 		if cfg.HistoryPath != "" {
 			if f, err := os.Create(cfg.HistoryPath); err == nil {
 				_, _ = ed.WriteHistory(f)
-				f.Close()
+				_ = f.Close()
 			}
 		}
 		if err := handleLine(cfg.Out, exec, line); err != nil {
 			if errors.Is(err, errExit) {
 				return nil
 			}
+			slog.Error("repl failed", "err", err)
 			return err
 		}
 	}
@@ -155,6 +160,7 @@ func runScanner(cfg Config, exec *query.Executor) error {
 			if errors.Is(err, errExit) {
 				return nil
 			}
+			slog.Error("repl failed", "err", err)
 			return err
 		}
 	}
@@ -242,7 +248,7 @@ func printNodes(w io.Writer, nodes []graph.Node) {
 	for _, n := range nodes {
 		fmt.Fprintf(tw, "%d\t%s\t%s\n", n.ID, n.Label, formatProps(n.Props))
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func printEdges(w io.Writer, edges []graph.Edge) {
@@ -255,7 +261,7 @@ func printEdges(w io.Writer, edges []graph.Edge) {
 	for _, e := range edges {
 		fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n", e.ID, e.From, e.To, e.Label, formatProps(e.Props))
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func printNeighbors(w io.Writer, ns []graph.Neighbor) {
@@ -268,7 +274,7 @@ func printNeighbors(w io.Writer, ns []graph.Neighbor) {
 	for _, n := range ns {
 		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", n.Depth, n.Node.ID, n.Node.Label, formatProps(n.Node.Props))
 	}
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func formatProps(p map[string]any) string {

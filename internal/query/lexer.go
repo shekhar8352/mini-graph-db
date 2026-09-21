@@ -1,14 +1,18 @@
+// Package query implements the legacy line-oriented query language.
 package query
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
 )
 
+// TokenType is a lexer token kind.
 type TokenType int
 
+// Token kinds produced by the lexer.
 const (
 	TokenEOF TokenType = iota
 	TokenIdent
@@ -29,6 +33,7 @@ const (
 	TokenError
 )
 
+// String returns the display name of the token kind.
 func (t TokenType) String() string {
 	switch t {
 	case TokenEOF:
@@ -70,6 +75,7 @@ func (t TokenType) String() string {
 	}
 }
 
+// Token is a single lexer token.
 type Token struct {
 	Type    TokenType
 	Lexeme  string
@@ -77,16 +83,19 @@ type Token struct {
 	Pos     int
 }
 
+// Lexer scans a query line into tokens.
 type Lexer struct {
 	src   string
 	start int
 	pos   int
 }
 
+// NewLexer returns a lexer over src.
 func NewLexer(src string) *Lexer {
 	return &Lexer{src: src}
 }
 
+// Next returns the next token, or TokenEOF at the end of input.
 func (l *Lexer) Next() Token {
 	l.skipSpace()
 	l.start = l.pos
@@ -201,12 +210,16 @@ func (l *Lexer) number() Token {
 	}
 	lex := l.src[l.start:l.pos]
 	if isFloat {
-		var f float64
-		fmt.Sscanf(lex, "%f", &f)
+		f, err := strconv.ParseFloat(lex, 64)
+		if err != nil {
+			return Token{Type: TokenError, Pos: l.start, Literal: err}
+		}
 		return l.tok(TokenNumber, f)
 	}
-	var n int64
-	fmt.Sscanf(lex, "%d", &n)
+	n, err := strconv.ParseInt(lex, 10, 64)
+	if err != nil {
+		return Token{Type: TokenError, Pos: l.start, Literal: err}
+	}
 	return l.tok(TokenNumber, n)
 }
 
