@@ -5,16 +5,23 @@ An embedded, in-memory **property-graph database** written in Go. It stores labe
 The working set lives in RAM. Durability is optional: a gob snapshot plus an append-only write-ahead log (WAL). Mutating statements are logged; on the next start the last snapshot is loaded and the WAL is replayed.
 
 ```bash
-go test ./...
-go run ./cmd/graphdb
+make test
+go run ./cmd/graphdb          # defaults to the interactive shell
+go run ./cmd/graphdb version
 ```
+
+Module path: `github.com/shekhar8352/mini-graph-db`. Docs live in [`docs/`](docs/README.md). The [roadmap](ROADMAP.md) is the plan for turning this into a networked, persistent graph database.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `-db` | `graph.db` | Snapshot file loaded on startup |
-| `-wal` | `graph.wal` | Append-only log of mutating statements |
-| `-history` | `graph.history` | REPL command history (up-arrow) |
+| `--data-dir` | `./data` | Directory for snapshot, WAL, and history |
+| `--db` | `<data-dir>/graph.db` | Snapshot file loaded on startup |
+| `--wal` | `<data-dir>/graph.wal` | Append-only log of mutating statements |
+| `--history` | `<data-dir>/graph.history` | REPL command history (up-arrow) |
+| `--log-level` | `info` | `debug`, `info`, `warn`, or `error` |
+| `--log-format` | `text` | `text` or `json` |
 
+Commands: `graphdb` / `graphdb shell` start the REPL; `graphdb version` prints semver and git commit.
 In a real terminal the prompt supports line editing: left/right move the cursor, up/down walk history, Tab completes keywords, Ctrl-C cancels the current line, Ctrl-D or `EXIT` leaves the REPL. Piped input uses a plain scanner (no line editor).
 
 ---
@@ -24,7 +31,8 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
 ```
                     ┌─────────────────────────────────────┐
                     │            cmd/graphdb              │
-                    │         flags: -db -wal -history    │
+                    │     cobra: shell | version          │
+                    │   flags: --data-dir --log-level     │
                     └─────────────────┬───────────────────┘
                                       │
                                       ▼
@@ -61,7 +69,7 @@ Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist
 
 | Path | Role |
 |------|------|
-| [`cmd/graphdb`](cmd/graphdb/main.go) | Process entry: parse flags, start the REPL |
+| [`cmd/graphdb`](cmd/graphdb) | Process entry: cobra CLI (`shell`, `version`) |
 | [`internal/repl`](internal/repl/repl.go) | Prompt, recovery, history, table-formatted output |
 | [`internal/query`](internal/query) | Lexer, recursive-descent parser, AST, executor |
 | [`internal/graph`](internal/graph) | Property graph, CRUD, indexes, BFS/DFS, shortest path |
@@ -240,14 +248,14 @@ labels: person
 
 Durability is two files, not a page store.
 
-**Snapshot (`-db`, `SAVE` / `LOAD`)**  
-Full copy of nodes, edges, and ID counters, encoded with `encoding/gob`. Properties are stored as a typed DTO (`string` / `int64` / `float64` / `bool`) so `map[string]any` round-trips cleanly. `Graph.Import` rebuilds adjacency lists and indexes from the snapshot.
+**Snapshot (`--db`, `SAVE` / `LOAD`)**  
+Full copy of nodes, edges, and ID counters, encoded with `encoding/gob`. Properties are stored as a typed DTO (`string` / `int64` / `float64` / `bool`) so `map[string]any` round-trips cleanly. `Graph.Import` rebuilds adjacency lists and indexes from the snapshot. Default path: `data/graph.db`.
 
-**WAL (`-wal`)**  
-One mutating query line per record, flushed with `Sync`. Recovery:
+**WAL (`--wal`)**  
+One mutating query line per record, flushed with `Sync`. Default path: `data/graph.wal`. Recovery:
 
-1. If `graph.db` exists, load it.
-2. Replay every statement in `graph.wal` (without re-appending).
+1. If the snapshot file exists, load it.
+2. Replay every statement in the WAL (without re-appending).
 3. New mutations append to the WAL until the next `SAVE`, which writes a snapshot and truncates the log.
 
 `LOAD` also truncates the WAL so the restored graph is the new source of truth.
@@ -261,11 +269,11 @@ This is the usual “checkpoint + redo log” pattern in miniature: the snapshot
 `repl.Run` owns session lifetime:
 
 1. Construct an empty `graph.Graph`.
-2. Load snapshot if the `-db` path exists.
+2. Load snapshot if the `--db` path exists.
 3. Open the WAL, replay it, attach it to the executor.
 4. Read-eval-print until `EXIT` or EOF.
 
-On a TTY, `liner` provides history (persisted to `-history`) and keyword completion (`CREATE NODE`, `MATCH EDGE`, `GET NODE`, …). On a pipe or in tests, `bufio.Scanner` is used so scripts stay deterministic.
+On a TTY, `liner` provides history (persisted to `--history`) and keyword completion (`CREATE NODE`, `MATCH EDGE`, `GET NODE`, …). On a pipe or in tests, `bufio.Scanner` is used so scripts stay deterministic.
 
 Results are aligned with `text/tabwriter`:
 
@@ -278,7 +286,8 @@ Results are aligned with `text/tabwriter`:
 ## Tests
 
 ```bash
-go test ./...
+make test          # go test -race -count=1 ./...
+make lint          # golangci-lint
 ```
 
 | Package | What is covered |
