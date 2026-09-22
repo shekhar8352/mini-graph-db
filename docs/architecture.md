@@ -2,6 +2,8 @@
 
 This is a snapshot of the **pre–Phase 1** architecture of `mini-graph-db`: an embedded, in-memory property graph driven by a line-oriented REPL. Later phases replace persistence, the query language, and the process model; this file stays as the baseline so diffs against the original design remain readable.
 
+Phase 1 added `internal/value` and multi-label nodes on top of this baseline. The current type rules are in [spec/values.md](spec/values.md); the README describes the engine as it runs today.
+
 Copied from the README architecture section at the start of Phase 0.
 
 ## Diagram

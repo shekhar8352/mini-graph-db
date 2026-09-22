@@ -72,6 +72,7 @@ Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist
 | [`cmd/graphdb`](cmd/graphdb) | Process entry: cobra CLI (`shell`, `version`) |
 | [`internal/repl`](internal/repl/repl.go) | Prompt, recovery, history, table-formatted output |
 | [`internal/query`](internal/query) | Lexer, recursive-descent parser, AST, executor |
+| [`internal/value`](internal/value) | Typed values, ordering, key and record encodings |
 | [`internal/graph`](internal/graph) | Property graph, CRUD, indexes, BFS/DFS, shortest path |
 | [`internal/persist`](internal/persist) | Gob snapshot encode/decode and WAL |
 
@@ -82,15 +83,16 @@ Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist
 The store is a **directed property graph**.
 
 ```
-Node { ID uint64, Label string, Props map[string]any }
-Edge { ID uint64, From uint64, To uint64, Label string, Props map[string]any }
+Node { ID uint64, Labels []string, Props map[propKeyID]value.Value }
+Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]value.Value }
 ```
 
 - IDs are assigned by the engine, starting at `1`, and never reused within a process lifetime (counters are persisted in the snapshot).
+- A node has a set of labels (sorted, unique, possibly empty). `Label()` returns the first label so the legacy one-label language keeps working. An edge has exactly one type, still stored in `Label`.
 - Edges are directed (`From → To`). Multiple edges between the same pair are allowed.
 - Deleting a node **cascades**: every incident inbound and outbound edge is removed.
-- Property values in the query language are strings, integers (`int64`), floats (`float64`), or booleans.
-- Callers always receive **copies**. Mutating a returned `Props` map does not change the store.
+- Property names are interned to `uint32` ids. Values are the typed model in [`docs/spec/values.md`](docs/spec/values.md): null, bool, int64, float64, string, bytes, list, map, date, datetime, duration, and node/edge references. A path is a result value and cannot be stored as a property.
+- The legacy query language still writes only strings, integers, floats, and booleans. Callers always receive **copies**. Mutating a map from `Properties()` does not change the store.
 
 ### In-memory layout
 
@@ -101,8 +103,9 @@ nodes      map[id] *Node
 edges      map[id] *Edge
 outEdges   map[nodeID] []edgeID     // adjacency, outgoing
 inEdges    map[nodeID] []edgeID     // adjacency, incoming
-labelIndex map[label] set[nodeID]   // MATCH person
-propIndex  map[key][type:value] set[nodeID]  // MATCH … WHERE name = "Alice"
+labelIndex map[label] set[nodeID]   // one entry per label on the node
+propIndex  map[propKeyID][EncodeKey(value)] set[nodeID]
+propKeys   name ↔ uint32           // intern table (catalog stub)
 nextNode, nextEdge                  // ID allocators
 ```
 
@@ -152,7 +155,7 @@ Property maps are `{key: value, key: value}`. Keys are identifiers. Values:
 | Boolean | `true` / `false` |
 | Bare ident | treated as a string (`Paris`) |
 
-`WHERE` operators: `=` `!=` `>` `<` `>=` `<=`. Numbers compare numerically; booleans only allow `=` / `!=`; everything else compares as strings.
+`WHERE` operators: `=` `!=` `>` `<` `>=` `<=`. Comparison uses the typed rules in [`docs/spec/values.md`](docs/spec/values.md): integers and floats compare exactly (including `1` and `1.0`), booleans only allow `=` / `!=`, and a comparison that is null or that mixes incomparable kinds does not match the row. Missing properties do not match either.
 
 ### Commands
 
@@ -221,10 +224,10 @@ graph> CREATE EDGE 1 -KNOWS-> 2 {since: 2020}
 created edge 1 1 -KNOWS-> 2
 graph> GET NODE 1
 ID  LABEL   PROPS
-1   person  age=30 name=Alice
+1   person  age=30 name="Alice"
 graph> MATCH person WHERE age > 25
 ID  LABEL   PROPS
-1   person  age=30 name=Alice
+1   person  age=30 name="Alice"
 graph> MATCH EDGE KNOWS WHERE since >= 2020
 ID  FROM  TO  LABEL  PROPS
 1   1     2   KNOWS  since=2020
@@ -233,8 +236,8 @@ ID  FROM  TO  LABEL  PROPS
 1   1     2   KNOWS  since=2020
 graph> PATH 1 TO 2
 ID  LABEL   PROPS
-1   person  age=30 name=Alice
-2   person  age=20 name=Bob
+1   person  age=30 name="Alice"
+2   person  age=20 name="Bob"
 path 1 -> 2
 graph> SHOW STATS
 nodes:  2
@@ -249,7 +252,7 @@ labels: person
 Durability is two files, not a page store.
 
 **Snapshot (`--db`, `SAVE` / `LOAD`)**  
-Full copy of nodes, edges, and ID counters, encoded with `encoding/gob`. Properties are stored as a typed DTO (`string` / `int64` / `float64` / `bool`) so `map[string]any` round-trips cleanly. `Graph.Import` rebuilds adjacency lists and indexes from the snapshot. Default path: `data/graph.db`.
+Full copy of nodes, edges, ID counters, and the property-key intern table, encoded with `encoding/gob`. Format version 1 stores each property with `value.EncodeRecord` and stores every node label. Version 0 snapshots (single label, scalar properties) still load. A newer version is rejected. `Graph.Import` rebuilds adjacency lists and indexes from the snapshot. Default path: `data/graph.db`.
 
 **WAL (`--wal`)**  
 One mutating query line per record, flushed with `Sync`. Default path: `data/graph.wal`. Recovery:
