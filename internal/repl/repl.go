@@ -17,6 +17,7 @@ import (
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
 	"github.com/shekhar8352/mini-graph-db/internal/persist"
 	"github.com/shekhar8352/mini-graph-db/internal/query"
+	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
 // Config controls snapshot/WAL recovery for a REPL session.
@@ -246,7 +247,7 @@ func printNodes(w io.Writer, nodes []graph.Node) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tLABEL\tPROPS")
 	for _, n := range nodes {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", n.ID, n.Label, formatProps(n.Props))
+		fmt.Fprintf(tw, "%d\t%s\t%s\n", n.ID, strings.Join(n.Labels(), ","), formatProps(n.Properties()))
 	}
 	_ = tw.Flush()
 }
@@ -259,7 +260,7 @@ func printEdges(w io.Writer, edges []graph.Edge) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "ID\tFROM\tTO\tLABEL\tPROPS")
 	for _, e := range edges {
-		fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n", e.ID, e.From, e.To, e.Label, formatProps(e.Props))
+		fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n", e.ID, e.From, e.To, e.Label, formatProps(e.Properties()))
 	}
 	_ = tw.Flush()
 }
@@ -272,12 +273,12 @@ func printNeighbors(w io.Writer, ns []graph.Neighbor) {
 	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(tw, "DEPTH\tID\tLABEL\tPROPS")
 	for _, n := range ns {
-		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", n.Depth, n.Node.ID, n.Node.Label, formatProps(n.Node.Props))
+		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", n.Depth, n.Node.ID, strings.Join(n.Node.Labels(), ","), formatProps(n.Node.Properties()))
 	}
 	_ = tw.Flush()
 }
 
-func formatProps(p map[string]any) string {
+func formatProps(p map[string]value.Value) string {
 	if len(p) == 0 {
 		return ""
 	}
@@ -288,7 +289,7 @@ func formatProps(p map[string]any) string {
 	sort.Strings(keys)
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
-		parts = append(parts, fmt.Sprintf("%s=%v", k, p[k]))
+		parts = append(parts, k+"="+value.Format(p[k]))
 	}
 	return strings.Join(parts, " ")
 }
