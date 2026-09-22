@@ -4,16 +4,17 @@ import (
 	"testing"
 
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
 func TestAddGetUpdateDeleteNode(t *testing.T) {
 	g := New()
 	n := g.AddNode("person", map[string]any{"name": "Alice", "age": int64(30)})
-	if n.ID != 1 || n.Label != "person" {
+	if n.ID != 1 || n.Label() != "person" {
 		t.Fatalf("unexpected node: %+v", n)
 	}
 	got, ok := g.GetNode(1)
-	if !ok || got.Props["name"] != "Alice" {
+	if !ok || !propEqual(got, "name", value.String("Alice")) {
 		t.Fatalf("GetNode failed: ok=%v got=%+v", ok, got)
 	}
 
@@ -21,8 +22,8 @@ func TestAddGetUpdateDeleteNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Props["age"] != int64(31) || updated.Props["city"] != "Paris" {
-		t.Fatalf("update merge failed: %+v", updated.Props)
+	if !propEqual(updated, "age", value.Int(31)) || !propEqual(updated, "city", value.String("Paris")) {
+		t.Fatalf("update merge failed: %+v", updated.Properties())
 	}
 
 	if err := g.DeleteNode(1); err != nil {
@@ -68,8 +69,8 @@ func TestAddGetUpdateDeleteEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.Props["since"] != int64(2021) {
-		t.Fatalf("edge update failed: %+v", updated.Props)
+	if !propEqualEdge(updated, "since", value.Int(2021)) {
+		t.Fatalf("edge update failed: %+v", updated.Properties())
 	}
 	if err := g.DeleteEdge(1); err != nil {
 		t.Fatal(err)
@@ -150,7 +151,7 @@ func TestNodesByLabelAndPropIndex(t *testing.T) {
 		t.Fatalf("expected 2 people, got %d", len(people))
 	}
 	alices := g.NodesByPropEq("name", "Alice")
-	if len(alices) != 1 || alices[0].Label != "person" {
+	if len(alices) != 1 || alices[0].Label() != "person" {
 		t.Fatalf("prop index lookup failed: %+v", alices)
 	}
 
@@ -193,9 +194,82 @@ func TestExportImportRoundTrip(t *testing.T) {
 func TestReturnedCopiesAreSafe(t *testing.T) {
 	g := New()
 	n := g.AddNode("person", map[string]any{"name": "Alice"})
-	n.Props["name"] = "mutated"
+	props := n.Properties()
+	props["name"] = value.String("mutated")
+	labels := n.Labels()
+	labels[0] = "other"
 	got, _ := g.GetNode(1)
-	if got.Props["name"] != "Alice" {
+	if !propEqual(got, "name", value.String("Alice")) || got.Label() != "person" {
 		t.Fatal("caller mutation leaked into store")
 	}
+}
+
+func TestMultiLabelIndex(t *testing.T) {
+	g := New()
+	n, err := g.CreateNode([]string{"person", "employee", "person"}, map[string]value.Value{
+		"name": value.String("Ada"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n.Label() != "employee" {
+		t.Fatalf("first label: %q", n.Label())
+	}
+	labels := n.Labels()
+	if len(labels) != 2 || labels[0] != "employee" || labels[1] != "person" {
+		t.Fatalf("labels: %v", labels)
+	}
+	if len(g.NodesByLabel("person")) != 1 || len(g.NodesByLabel("employee")) != 1 {
+		t.Fatal("node missing from a label index")
+	}
+	if err := g.DeleteNode(n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.NodesByLabel("person")) != 0 || len(g.NodesByLabel("employee")) != 0 {
+		t.Fatal("label index not cleared")
+	}
+}
+
+func TestPropKeyInterningAndNumericIndex(t *testing.T) {
+	g := New()
+	a := g.AddNode("n", map[string]any{"name": "A", "n": int64(1)})
+	b := g.AddNode("n", map[string]any{"name": "B"})
+	idA, ok := a.PropID("name")
+	idB, okB := b.PropID("name")
+	if !ok || !okB || idA == 0 || idA != idB {
+		t.Fatalf("property keys not interned: %d %d", idA, idB)
+	}
+	if got := g.NodesByPropEq("n", float64(1)); len(got) != 1 || got[0].ID != a.ID {
+		t.Fatalf("cross-type prop index: %+v", got)
+	}
+	snap := g.Export()
+	g2 := New()
+	g2.Import(snap)
+	got, _ := g2.GetNode(a.ID)
+	id2, ok := got.PropID("name")
+	if !ok || id2 != idA {
+		t.Fatalf("prop id not preserved: %d", id2)
+	}
+}
+
+func TestRejectPathProperty(t *testing.T) {
+	g := New()
+	p, err := value.PathOf([]uint64{1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = g.CreateNode([]string{"n"}, map[string]value.Value{"p": p})
+	if !gerr.IsCode(err, gerr.InvalidArgument) {
+		t.Fatalf("expected InvalidArgument, got %v", err)
+	}
+}
+
+func propEqual(n Node, key string, want value.Value) bool {
+	got, ok := n.Prop(key)
+	return ok && value.Equal(got, want)
+}
+
+func propEqualEdge(e Edge, key string, want value.Value) bool {
+	got, ok := e.Prop(key)
+	return ok && value.Equal(got, want)
 }

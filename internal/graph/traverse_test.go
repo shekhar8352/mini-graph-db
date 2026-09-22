@@ -29,7 +29,9 @@ func mustEdge(t *testing.T, g *Graph, from, to uint64, label string) {
 func names(ns []Neighbor) []string {
 	out := make([]string, len(ns))
 	for i, n := range ns {
-		out[i] = n.Node.Props["name"].(string)
+		v, _ := n.Node.Prop("name")
+		s, _ := v.StringValue()
+		out[i] = s
 	}
 	return out
 }
