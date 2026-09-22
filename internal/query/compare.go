@@ -1,12 +1,11 @@
 package query
 
 import (
-	"fmt"
-	"math"
-	"strings"
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
+	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
-func matchWhere(props map[string]any, w *Where) (bool, error) {
+func matchWhere(props map[string]value.Value, w *Where) (bool, error) {
 	if w == nil {
 		return true, nil
 	}
@@ -14,80 +13,25 @@ func matchWhere(props map[string]any, w *Where) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	return compare(left, w.Op, w.Value)
-}
-
-func compare(left any, op string, right any) (bool, error) {
-	if ln, ok := asFloat(left); ok {
-		if rn, ok := asFloat(right); ok {
-			return cmpNum(ln, op, rn)
+	right, err := value.FromAny(w.Value)
+	if err != nil {
+		return false, gerr.Wrap(gerr.InvalidArgument, "invalid comparison value", err)
+	}
+	if _, isBool := left.BoolValue(); isBool {
+		if _, rightBool := right.BoolValue(); rightBool && w.Op != "=" && w.Op != "!=" {
+			return false, gerr.Newf(gerr.InvalidArgument, "operator %s is not valid for booleans", w.Op)
 		}
 	}
-	if lb, ok := left.(bool); ok {
-		if rb, ok := right.(bool); ok {
-			switch op {
-			case "=":
-				return lb == rb, nil
-			case "!=":
-				return lb != rb, nil
-			default:
-				return false, fmt.Errorf("operator %s is not valid for booleans", op)
-			}
-		}
+	res, err := value.ApplyOp(w.Op, left, right)
+	if err != nil {
+		return false, gerr.Wrap(gerr.InvalidArgument, "comparison", err)
 	}
-	ls := fmt.Sprint(left)
-	rs := fmt.Sprint(right)
-	switch op {
-	case "=":
-		return ls == rs, nil
-	case "!=":
-		return ls != rs, nil
-	case ">":
-		return ls > rs, nil
-	case "<":
-		return ls < rs, nil
-	case ">=":
-		return ls >= rs, nil
-	case "<=":
-		return ls <= rs, nil
-	default:
-		return false, fmt.Errorf("unknown operator %s", op)
+	if res.Kind() == value.KindNull {
+		return false, nil
 	}
-}
-
-func asFloat(v any) (float64, bool) {
-	switch t := v.(type) {
-	case int64:
-		return float64(t), true
-	case int:
-		return float64(t), true
-	case float64:
-		return t, true
-	case string:
-		var f float64
-		if _, err := fmt.Sscanf(strings.TrimSpace(t), "%f", &f); err == nil {
-			return f, true
-		}
+	b, ok := res.BoolValue()
+	if !ok {
+		return false, gerr.New(gerr.Internal, "comparison did not return bool")
 	}
-	return 0, false
-}
-
-func cmpNum(l float64, op string, r float64) (bool, error) {
-	eq := math.Abs(l-r) < 1e-9
-	switch op {
-	case "=":
-		return eq, nil
-	case "!=":
-		return !eq, nil
-	case ">":
-		return l > r && !eq, nil
-	case "<":
-		return l < r && !eq, nil
-	case ">=":
-		return l > r || eq, nil
-	case "<=":
-		return l < r || eq, nil
-	default:
-		return false, fmt.Errorf("unknown operator %s", op)
-	}
+	return b, nil
 }

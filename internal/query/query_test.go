@@ -124,7 +124,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Nodes) != 1 || res.Nodes[0].Props["name"] != "Alice" {
+	if len(res.Nodes) != 1 || !nodeProp(res.Nodes[0], "name", "Alice") {
 		t.Fatalf("match >: %+v", res.Nodes)
 	}
 
@@ -156,7 +156,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Edges) != 1 || res.Edges[0].Label != "KNOWS" || res.Edges[0].Props["since"] != int64(2020) {
+	if len(res.Edges) != 1 || res.Edges[0].Label != "KNOWS" || !edgeProp(res.Edges[0], "since", int64(2020)) {
 		t.Fatalf("edges between: %+v", res.Edges)
 	}
 
@@ -172,7 +172,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Nodes) != 1 || res.Nodes[0].Props["name"] != "Alice" {
+	if len(res.Nodes) != 1 || !nodeProp(res.Nodes[0], "name", "Alice") {
 		t.Fatalf("get node: %+v", res.Nodes)
 	}
 
@@ -274,6 +274,24 @@ func TestHelpAndExit(t *testing.T) {
 	if err != nil || !x.Exit {
 		t.Fatalf("quit: %+v %v", x, err)
 	}
+}
+
+func nodeProp(n graph.Node, key, want string) bool {
+	v, ok := n.Prop(key)
+	if !ok {
+		return false
+	}
+	s, ok := v.StringValue()
+	return ok && s == want
+}
+
+func edgeProp(e graph.Edge, key string, want int64) bool {
+	v, ok := e.Prop(key)
+	if !ok {
+		return false
+	}
+	i, ok := v.IntValue()
+	return ok && i == want
 }
 
 func mustExec(t *testing.T, e *Executor, line string) {

@@ -1,10 +1,13 @@
 package persist
 
 import (
+	"encoding/gob"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
 func TestSaveLoadRoundTrip(t *testing.T) {
@@ -29,13 +32,71 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 		t.Fatalf("stats %+v", st)
 	}
 	n, ok := g2.GetNode(1)
-	if !ok || n.Props["name"] != "Alice" || n.Props["age"] != int64(30) || n.Props["ok"] != true {
-		t.Fatalf("node props %+v", n.Props)
+	if !ok || !persistProp(n, "name", value.String("Alice")) || !persistProp(n, "age", value.Int(30)) || !persistProp(n, "ok", value.Bool(true)) {
+		t.Fatalf("node props %+v", n.Properties())
+	}
+	if n.Label() != "person" {
+		t.Fatalf("label %q", n.Label())
 	}
 	next := g2.AddNode("person", nil)
 	if next.ID != 3 {
 		t.Fatalf("id counter: %d", next.ID)
 	}
+}
+
+func TestLoadLegacySnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "legacy.db")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := encodedSnapshot{
+		Version:  0,
+		NextNode: 2,
+		Nodes: []encodedNode{{
+			ID:    1,
+			Label: "person",
+			Props: []encodedProp{{Key: "name", Kind: "s", Str: "Ada"}, {Key: "age", Kind: "i", Int: 36}},
+		}},
+	}
+	if err := gob.NewEncoder(f).Encode(enc); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	g := graph.New()
+	if err := Load(g, path); err != nil {
+		t.Fatal(err)
+	}
+	n, ok := g.GetNode(1)
+	if !ok || n.Label() != "person" || !persistProp(n, "name", value.String("Ada")) || !persistProp(n, "age", value.Int(36)) {
+		t.Fatalf("legacy node %+v", n.Properties())
+	}
+}
+
+func TestRejectNewerSnapshot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new.db")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	enc := encodedSnapshot{Version: snapshotVersion + 1}
+	if err := gob.NewEncoder(f).Encode(enc); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Load(graph.New(), path); err == nil {
+		t.Fatal("expected newer snapshot to be rejected")
+	}
+}
+
+func persistProp(n graph.Node, key string, want value.Value) bool {
+	got, ok := n.Prop(key)
+	return ok && value.Equal(got, want)
 }
 
 func TestWALAppendReadTruncate(t *testing.T) {

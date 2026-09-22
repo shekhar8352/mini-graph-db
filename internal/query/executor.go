@@ -60,7 +60,7 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 		n := e.G.AddNode(s.Label, s.Props)
 		return Result{
 			Kind:     "message",
-			Message:  fmt.Sprintf("created node %d label=%s", n.ID, n.Label),
+			Message:  fmt.Sprintf("created node %d label=%s", n.ID, strings.Join(n.Labels(), ",")),
 			Nodes:    []graph.Node{n},
 			Mutating: true,
 		}, nil
@@ -105,7 +105,7 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 		} else if s.Where != nil {
 			filtered := nodes[:0]
 			for _, n := range nodes {
-				ok, err := matchWhere(n.Props, s.Where)
+				ok, err := matchWhere(n.Properties(), s.Where)
 				if err != nil {
 					return Result{}, err
 				}
@@ -218,7 +218,7 @@ func filterEdges(edges []graph.Edge, w *Where) ([]graph.Edge, error) {
 	}
 	out := edges[:0]
 	for _, e := range edges {
-		ok, err := matchWhere(e.Props, w)
+		ok, err := matchWhere(e.Properties(), w)
 		if err != nil {
 			return nil, err
 		}

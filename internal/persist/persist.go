@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
 func init() {
@@ -21,19 +22,28 @@ func init() {
 	gob.Register([]encodedProp{})
 }
 
+// snapshotVersion is the gob snapshot format written by this binary.
+// Version 0 is the Phase 0 layout (single label, scalar properties).
+// Version 1 adds a label set, interned property-key ids, and value.EncodeRecord.
+// A newer version is rejected.
+const snapshotVersion = 1
+
 type encodedProp struct {
-	Key   string
-	Kind  string
-	Str   string
-	Int   int64
-	Float float64
-	Bool  bool
+	Key    string
+	KeyID  uint32
+	Kind   string
+	Str    string
+	Int    int64
+	Float  float64
+	Bool   bool
+	Record []byte
 }
 
 type encodedNode struct {
-	ID    uint64
-	Label string
-	Props []encodedProp
+	ID     uint64
+	Label  string
+	Labels []string
+	Props  []encodedProp
 }
 
 type encodedEdge struct {
@@ -45,10 +55,12 @@ type encodedEdge struct {
 }
 
 type encodedSnapshot struct {
+	Version  int
 	Nodes    []encodedNode
 	Edges    []encodedEdge
 	NextNode uint64
 	NextEdge uint64
+	PropKeys []string
 }
 
 // Save writes a gob snapshot of g to path, creating parent directories as needed.
@@ -66,14 +78,23 @@ func Save(g *graph.Graph, path string) error {
 
 	snap := g.Export()
 	enc := encodedSnapshot{
+		Version:  snapshotVersion,
 		NextNode: snap.NextNode,
 		NextEdge: snap.NextEdge,
+		PropKeys: snap.PropKeys,
 	}
 	for _, n := range snap.Nodes {
-		enc.Nodes = append(enc.Nodes, encodedNode{ID: n.ID, Label: n.Label, Props: encodeProps(n.Props)})
+		labels := n.Labels()
+		node := encodedNode{ID: n.ID, Labels: labels, Props: encodeProps(n.PropList())}
+		if len(labels) > 0 {
+			node.Label = labels[0]
+		}
+		enc.Nodes = append(enc.Nodes, node)
 	}
 	for _, e := range snap.Edges {
-		enc.Edges = append(enc.Edges, encodedEdge{ID: e.ID, From: e.From, To: e.To, Label: e.Label, Props: encodeProps(e.Props)})
+		enc.Edges = append(enc.Edges, encodedEdge{
+			ID: e.ID, From: e.From, To: e.To, Label: e.Label, Props: encodeProps(e.PropList()),
+		})
 	}
 	return gob.NewEncoder(f).Encode(enc)
 }
@@ -90,58 +111,89 @@ func Load(g *graph.Graph, path string) error {
 	if err := gob.NewDecoder(f).Decode(&enc); err != nil {
 		return err
 	}
+	if enc.Version > snapshotVersion {
+		return fmt.Errorf("persist: snapshot format version %d is newer than supported version %d", enc.Version, snapshotVersion)
+	}
 	snap := graph.Snapshot{
 		NextNode: enc.NextNode,
 		NextEdge: enc.NextEdge,
+		PropKeys: enc.PropKeys,
 	}
 	for _, n := range enc.Nodes {
-		snap.Nodes = append(snap.Nodes, graph.Node{ID: n.ID, Label: n.Label, Props: decodeProps(n.Props)})
+		props, err := decodeProps(n.Props)
+		if err != nil {
+			return err
+		}
+		snap.Nodes = append(snap.Nodes, graph.MakeNode(n.ID, nodeLabels(enc.Version, n), props))
 	}
 	for _, e := range enc.Edges {
-		snap.Edges = append(snap.Edges, graph.Edge{ID: e.ID, From: e.From, To: e.To, Label: e.Label, Props: decodeProps(e.Props)})
+		props, err := decodeProps(e.Props)
+		if err != nil {
+			return err
+		}
+		snap.Edges = append(snap.Edges, graph.MakeEdge(e.ID, e.From, e.To, e.Label, props))
 	}
 	g.Import(snap)
 	return nil
 }
 
-func encodeProps(m map[string]any) []encodedProp {
-	out := make([]encodedProp, 0, len(m))
-	for k, v := range m {
-		p := encodedProp{Key: k}
-		switch t := v.(type) {
-		case string:
-			p.Kind, p.Str = "s", t
-		case int64:
-			p.Kind, p.Int = "i", t
-		case int:
-			p.Kind, p.Int = "i", int64(t)
-		case float64:
-			p.Kind, p.Float = "f", t
-		case bool:
-			p.Kind, p.Bool = "b", t
-		default:
-			p.Kind, p.Str = "s", fmt.Sprint(t)
+func nodeLabels(version int, n encodedNode) []string {
+	if version == 0 {
+		return []string{n.Label}
+	}
+	return n.Labels
+}
+
+func encodeProps(props []graph.Prop) []encodedProp {
+	out := make([]encodedProp, 0, len(props))
+	for _, p := range props {
+		ep := encodedProp{
+			Key:    p.Name,
+			KeyID:  p.ID,
+			Kind:   "r",
+			Record: value.EncodeRecord(p.Value),
 		}
-		out = append(out, p)
+		switch p.Value.Kind() {
+		case value.KindString:
+			ep.Str, _ = p.Value.StringValue()
+		case value.KindInt:
+			ep.Int, _ = p.Value.IntValue()
+		case value.KindFloat:
+			ep.Float, _ = p.Value.FloatValue()
+		case value.KindBool:
+			ep.Bool, _ = p.Value.BoolValue()
+		}
+		out = append(out, ep)
 	}
 	return out
 }
 
-func decodeProps(ps []encodedProp) map[string]any {
-	out := make(map[string]any, len(ps))
+func decodeProps(ps []encodedProp) ([]graph.Prop, error) {
+	out := make([]graph.Prop, 0, len(ps))
 	for _, p := range ps {
+		prop := graph.Prop{ID: p.KeyID, Name: p.Key}
+		if len(p.Record) > 0 {
+			v, err := value.DecodeRecord(p.Record)
+			if err != nil {
+				return nil, fmt.Errorf("persist: property %q: %w", p.Key, err)
+			}
+			prop.Value = v
+			out = append(out, prop)
+			continue
+		}
 		switch p.Kind {
 		case "i":
-			out[p.Key] = p.Int
+			prop.Value = value.Int(p.Int)
 		case "f":
-			out[p.Key] = p.Float
+			prop.Value = value.Float(p.Float)
 		case "b":
-			out[p.Key] = p.Bool
+			prop.Value = value.Bool(p.Bool)
 		default:
-			out[p.Key] = p.Str
+			prop.Value = value.String(p.Str)
 		}
+		out = append(out, prop)
 	}
-	return out
+	return out, nil
 }
 
 // WAL is an append-only log of mutating query statements.
