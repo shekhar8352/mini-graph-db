@@ -1,6 +1,6 @@
 # Dependencies
 
-Core engine packages stay stdlib-only: `internal/value` (Phase 1), and `internal/storage`, `internal/wal`, `internal/txn`, `internal/lang`, `internal/exec`, `internal/index`, `internal/catalog` (later phases). `internal/graph`, `internal/query`, and `internal/persist` are also stdlib-only today.
+Core engine packages stay stdlib-only: `internal/value` (Phase 1) and `internal/storage` including `memory`, `enginetest`, and `graphstore` (Phase 2A). `internal/wal`, `internal/txn`, `internal/lang`, `internal/exec`, `internal/index`, and `internal/catalog` stay stdlib-only when they arrive. `internal/graph`, `internal/query`, and `internal/persist` are also stdlib-only today.
 
 Anything else requires an allowlist entry here and a one-line justification in the commit message. New libraries not on the roadmap allowlist need an ADR.
 

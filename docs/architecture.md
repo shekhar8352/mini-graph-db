@@ -4,6 +4,8 @@ This is a snapshot of the **pre–Phase 1** architecture of `mini-graph-db`: an 
 
 Phase 1 added `internal/value` and multi-label nodes on top of this baseline. The current type rules are in [spec/values.md](spec/values.md); the README describes the engine as it runs today.
 
+Phase 2A adds `internal/storage` (the engine interface, the in-memory engine, and the conformance suite) and `internal/storage/graphstore`. `internal/graph` is a facade over that engine. Page files, the B+tree, and the binary WAL are still later Phase 2 work.
+
 Copied from the README architecture section at the start of Phase 0.
 
 ## Diagram
