@@ -4,6 +4,26 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 2B — Page file and buffer pool (2026-09-25)
+
+- **2B.1** `storage/disk.PageFile` creates and opens a heap file. Page 0 is the header (`GRDB`, format version 1, page size, database id, creation time, checkpoint LSN, freelist head, page count, and a root slot per keyspace). `ReadPage`, `WritePage`, `Allocate`, `Free`, `Sync`, and `Truncate` operate on the other pages. Each page ends with a CRC32C trailer. A newer format version is refused from the first 36 bytes, before the checksum is checked. The default page size is 8 KiB; the size is fixed at creation.
+- **2B.2** `storage/disk.Pool` is a fixed frame table. `Get` pins a page, the last `Unpin` marks it most recently used, and eviction takes the least recently unpinned frame, writing it back when it is dirty. `FlushAll` writes the dirty list and syncs. Stats expose hits, misses, evictions, flushes, and the hit ratio. Hooks report the same events and must not call back into the pool.
+- **2B.3** `storage/disk/fs` wraps `os.File`. `Fault` fails the next read, write, or sync, short-writes, or queues writes until sync. A queued write is visible to a later read. `Discard` drops the queue.
+
+The shell still uses the memory engine. There is no B+tree and no binary WAL yet.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P1 Durability | `Sync` and `Close` fsync the file. A crash during allocate or free can leak a page; the write order does not make a live page look free. Acknowledged database commits wait on the WAL, which is Phase 2D/2E. |
+| P4 Data integrity | Every page carries CRC32C. A bad checksum, a short page, a page id that does not match its position, or a freelist that does not match the header is `Corruption`. |
+| P5 Recoverability | Open ignores a torn tail past the published page count and refuses a file that is shorter than that count. Redo from a checkpoint is Phase 2E. |
+| P10 Change management | Page format version is 1. A newer version is refused with an explicit error. Page size cannot change after creation. Reserved page types 4–6 do not bump the version. |
+| P12 Testing | Page-file, freelist, truncate, checksum, buffer-pool, and fault-injection tests run under `go test -race`. |
+| P13 Documentation | [ADR 0004](adr/0004-page-file.md) and [spec/pages.md](spec/pages.md). |
+| P2, P3, P6–P9, P11 | Not yet applicable. Transactions, constraints, and the server are later phases. |
+
 ### Phase 2A — Storage interface and in-memory engine (2026-09-25)
 
 - **2A.1** `storage.Engine` and `storage.Tx` are a key-value API: begin read-only or read-write, get/put/delete, a cursor (`Seek`, `SeekReverse`, `Next`, `Prev`), commit, rollback, `Sync`, and `Stats`. Keyspaces are an argument, not a prefix inside the key.
