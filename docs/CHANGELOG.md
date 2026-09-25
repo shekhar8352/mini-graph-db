@@ -4,6 +4,25 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 2A — Storage interface and in-memory engine (2026-09-25)
+
+- **2A.1** `storage.Engine` and `storage.Tx` are a key-value API: begin read-only or read-write, get/put/delete, a cursor (`Seek`, `SeekReverse`, `Next`, `Prev`), commit, rollback, `Sync`, and `Stats`. Keyspaces are an argument, not a prefix inside the key.
+- **2A.2** `storage/memory` keeps a sorted key slice and a value map per keyspace. A transaction reads the snapshot from `Begin` plus its own writes. Commit publishes those writes onto the latest snapshot. Last writer wins per key until Phase 3.
+- **2A.3** `storage/enginetest` checks order, cursor positioning, isolation of uncommitted writes, and crash hooks (`BeforeCommit`, `AfterCommit`, `Crash`). The memory engine passes it.
+- **2A.4** `storage/graphstore` stores nodes, edges, adjacency, label and property indexes, and catalog ids on a `storage.Tx`. Delete of a node removes incident edges. IDs come from catalog counters and are not reused. `internal/graph` is the facade the query executor, shell, and gob snapshot use, so those tests run on the memory engine.
+
+Gob snapshots stay format version 1. There is no page file and no binary WAL yet.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P2 Consistency | One transaction can commit or roll back. Uncommitted writes are invisible to other transactions. Multi-statement transactions and write-write conflicts are Phase 3. |
+| P10 Change management | No on-disk format change. Gob snapshot version 1 is unchanged. |
+| P12 Testing | `storage/enginetest` is the conformance suite. Existing graph, query, persist, and shell tests run on the memory engine. |
+| P13 Documentation | [ADR 0003](adr/0003-storage-engine.md). |
+| P1, P4–P9, P11 | Not yet applicable. Durability, page checksums, and the disk engine are later Phase 2 tasks. |
+
 ### Phase 1 — Data model and typed value system (2026-09-22)
 
 - **1.1** `internal/value.Value` is a tagged union: Null, Bool, Int, Float, String, Bytes, List, Map, Date, DateTime, Duration, Node, Edge, Path. Path is not storable as a property.

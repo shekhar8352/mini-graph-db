@@ -51,19 +51,24 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
                                    ▼          ▼
                     ┌──────────────────┐  ┌──────────────────┐
                     │  internal/graph  │  │ internal/persist │
-                    │  engine + indexes│  │  snapshot + WAL  │
-                    └──────────────────┘  └──────────────────┘
+                    │  facade          │  │  snapshot + WAL  │
+                    └────────┬─────────┘  └──────────────────┘
+                             ▼
+                    ┌──────────────────┐
+                    │ graphstore +     │
+                    │ storage/memory   │
+                    └──────────────────┘
 ```
 
 Request path for a typical command:
 
 1. The REPL reads a line (`graph> MATCH person WHERE age > 25`).
 2. `query.Parse` lexes tokens and builds an AST (`MatchStmt`).
-3. `query.Executor` calls the graph engine (`NodesByLabel` + `WHERE` compare).
+3. `query.Executor` calls the graph facade, which runs the statement as one transaction on the in-memory storage engine (`NodesByLabel` + `WHERE` compare).
 4. If the statement mutated the graph, the raw line is appended to the WAL.
 5. The REPL prints a text table (nodes, edges, neighbors, path, or stats).
 
-Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist`) → `graph`. There are no third-party dependencies in the engine, parser, or persistence layer. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
+Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist`) → `graphstore` → `storage`. There are no third-party dependencies in the engine, parser, or persistence layer. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
 
 ### Package map
 
@@ -73,7 +78,10 @@ Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist
 | [`internal/repl`](internal/repl/repl.go) | Prompt, recovery, history, table-formatted output |
 | [`internal/query`](internal/query) | Lexer, recursive-descent parser, AST, executor |
 | [`internal/value`](internal/value) | Typed values, ordering, key and record encodings |
-| [`internal/graph`](internal/graph) | Property graph, CRUD, indexes, BFS/DFS, shortest path |
+| [`internal/storage`](internal/storage) | Key-value engine interface |
+| [`internal/storage/memory`](internal/storage/memory) | In-memory engine (sorted keys per keyspace) |
+| [`internal/storage/graphstore`](internal/storage/graphstore) | Nodes, edges, adjacency, indexes, catalog ids |
+| [`internal/graph`](internal/graph) | Facade used by the query executor, shell, and gob snapshots |
 | [`internal/persist`](internal/persist) | Gob snapshot encode/decode and WAL |
 
 ---
@@ -94,22 +102,24 @@ Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]valu
 - Property names are interned to `uint32` ids. Values are the typed model in [`docs/spec/values.md`](docs/spec/values.md): null, bool, int64, float64, string, bytes, list, map, date, datetime, duration, and node/edge references. A path is a result value and cannot be stored as a property.
 - The legacy query language still writes only strings, integers, floats, and booleans. Callers always receive **copies**. Mutating a map from `Properties()` does not change the store.
 
-### In-memory layout
+### Storage layout
 
-`Graph` is guarded by a `sync.RWMutex`. Traversals take a read lock; writes take a write lock.
+Each `Graph` method auto-commits one transaction on the in-memory engine. A transaction sees the committed snapshot from its start, plus its own writes. Other transactions do not see those writes until commit.
+
+Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. Whether the future disk engine uses one B+tree or one tree per keyspace is still open ([ADR 0003](docs/adr/0003-storage-engine.md)).
 
 ```
-nodes      map[id] *Node
-edges      map[id] *Edge
-outEdges   map[nodeID] []edgeID     // adjacency, outgoing
-inEdges    map[nodeID] []edgeID     // adjacency, incoming
-labelIndex map[label] set[nodeID]   // one entry per label on the node
-propIndex  map[propKeyID][EncodeKey(value)] set[nodeID]
-propKeys   name ↔ uint32           // intern table (catalog stub)
-nextNode, nextEdge                  // ID allocators
+N  node id            → labels and properties
+E  edge id            → from, to, type, properties
+O  from|type|to|edge  → outgoing adjacency
+I  to|type|from|edge  → incoming adjacency
+L  label id|node id   → label index
+T  type id|edge id    → edge-type index
+P  prop id|value|node → node property equality index
+C  kind|name          → names, ids, and id counters
 ```
 
-Neighbor lookup is O(degree) via the adjacency lists. `MATCH <label>` uses the label index. Equality `WHERE` on nodes can use the property index; range comparisons (`>`, `<`, …) scan the label set and compare in the executor.
+Neighbor lookup walks the outgoing adjacency of a node. `MATCH <label>` uses the label index. Equality `WHERE` on nodes can use the property index; range comparisons (`>`, `<`, …) scan the label set and compare in the executor. Property-key ids and the next node and edge ids live in the catalog keyspace.
 
 ### Traversals
 
@@ -295,6 +305,8 @@ make lint          # golangci-lint
 
 | Package | What is covered |
 |---------|-----------------|
+| `internal/storage/memory` | Engine conformance: order, cursors, isolation, crash hooks |
+| `internal/storage/graphstore` | Cascade delete, id allocation, property index |
 | `internal/graph` | CRUD, cascade delete, indexes, export/import, BFS/DFS, shortest path |
 | `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, SAVE/LOAD, WAL replay |
 | `internal/persist` | Gob round-trip of mixed property types; WAL append / read / truncate |

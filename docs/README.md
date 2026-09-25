@@ -22,3 +22,4 @@ Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later ph
 | [0000](adr/0000-template.md) | Template | — |
 | [0001](adr/0001-module-path.md) | Go module path | Accepted |
 | [0002](adr/0002-value-model.md) | Value model, ordering, and encodings | Accepted |
+| [0003](adr/0003-storage-engine.md) | Storage engine interface and memory snapshots | Accepted |
