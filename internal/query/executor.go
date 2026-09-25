@@ -24,6 +24,8 @@ type Result struct {
 }
 
 // Executor runs parsed statements against a graph, optionally logging mutations.
+// The graph is the in-memory storage engine: every statement runs through
+// graphstore on a storage.Tx.
 type Executor struct {
 	G   *graph.Graph
 	WAL *persist.WAL
