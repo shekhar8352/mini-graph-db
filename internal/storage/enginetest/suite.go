@@ -370,7 +370,9 @@ func testConcurrent(t *testing.T, open OpenFunc) {
 
 	release := make(chan struct{})
 	ready := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
+		defer close(done)
 		tx, err := eng.Begin(storage.TxOptions{})
 		if err != nil {
 			t.Error(err)
@@ -408,6 +410,7 @@ func testConcurrent(t *testing.T, open OpenFunc) {
 	}
 	wg.Wait()
 	close(release)
+	<-done
 }
 
 func begin(t *testing.T, eng storage.Engine, ro bool) storage.Tx {
