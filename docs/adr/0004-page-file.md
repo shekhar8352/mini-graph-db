@@ -14,7 +14,7 @@ Phase 2B is the heap the B+tree and the WAL will sit on. The roadmap fixes the o
 
 **Format version 1.** The first 36 bytes of the file stay stable across versions: the 24-byte page header, the magic `GRDB`, the uint16 version, two reserved bytes, and the uint32 page size. Open reads that prefix and refuses a newer version before it checks the checksum, so a later checksum or payload can still be recognized as too new. Version 0 and any other older version are refused. There is no version 0 file in the wild.
 
-**Every page is `pageSize` bytes.** The size is a power of two from 4096 to 65536, chosen at `Create` and stored in the header. The default is 8192. A 24-byte header holds the page id, the page LSN, and the page type. The last four bytes are CRC32C (Castagnoli) of everything before them. Flags and the reserved header word are written as zero; readers ignore them. Page types 4, 5, and 6 are reserved for the leaf, internal, and overflow layouts. This phase writes only header, free, and data. Adding those type codes later does not bump the version. Changing field widths does.
+**Every page is `pageSize` bytes.** The size is a power of two from 4096 to 65536, chosen at `Create` and stored in the header. The default is 8192. A 24-byte header holds the page id, the page LSN, and the page type. The last four bytes are CRC32C (Castagnoli) of everything before them. Flags and the reserved header word are written as zero; readers ignore them. Page types 4, 5, and 6 are the leaf, internal, and overflow layouts filled in by [ADR 0005](0005-btree.md). This phase writes only header, free, and data. Using those type codes does not bump the version. Changing field widths does.
 
 **The freelist is an intrusive singly linked list.** The header stores the head. A free page stores the next id in the first eight payload bytes. Zero ends the list. Allocate pops the head. Free pushes. That is LIFO, needs no extra bitmap page, and is enough until a compaction pass exists.
 
@@ -33,13 +33,13 @@ Phase 2B is the heap the B+tree and the WAL will sit on. The roadmap fixes the o
 
 ## Consequences
 
-- Phase 2C can use page types 4–6 and the root slots in the header without a version bump. The root slots do not decide one tree versus nine.
+- Phase 2C uses page types 4–6 and the root slots without a version bump. Each slot is one tree ([ADR 0005](0005-btree.md)).
 - A crash in this phase can leak a page or leave a torn tail. It must not make a live page look free. The WAL in Phase 2E is what makes a committed write durable across that crash. `Sync` only flushes what has already been written.
 - Callers that mix `PageFile.WritePage` with a pool that has the same page cached will diverge. The pool is the writer for pages it holds.
 - Checksum failures, short reads, page-id mismatches, and a freelist that does not match the header are `Corruption`. A newer format version is `InvalidArgument` with an explicit message.
 
 ## Follow-up
 
-- Phase 2C lays out leaf, internal, and overflow pages and chooses the tree shape.
+- Phase 2C laid out leaf, internal, and overflow pages and chose one tree per keyspace ([ADR 0005](0005-btree.md)).
 - Phase 2D frames WAL records with the same CRC32C.
 - Phase 2E orders WAL durability ahead of these page writes and runs the checkpointer.
