@@ -4,13 +4,33 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 2C — B+tree (2026-09-26)
+
+- **2C.1** Leaf and internal pages are slotted. Cell bytes grow up from a fixed header and a directory of uint16 offsets grows down from the end of the payload. Keys are stored in full. There is no prefix compression.
+- **2C.2** `storage/disk.Tree` is one B+tree per keyspace, rooted at that keyspace's header slot. `Put` inserts or replaces and splits a full page. `Delete` removes a key and borrows or merges an underfull page. `Get` is a point lookup. `Cursor` seeks the first key greater than or equal to a target, or the last key less than or equal to one, and walks forward and backward.
+- **2C.3** A value longer than a quarter of the page is stored on a chain of overflow pages. The leaf cell keeps the value length and the first page id.
+- **2C.4** A million random puts, deletes, and gets match a reference map. Concurrent readers share the tree with one writer.
+
+The shell still uses the memory engine. There is no binary WAL yet. A crash during a multi-page split is not atomic; durability of a committed update is Phase 2D and 2E. Format version stays 1.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P4 Data integrity | Leaf and internal decoders reject a truncated cell, a bad offset, an empty child, or a short overflow chain as `Corruption`. Tests check key order, separators, sibling links, and a single leaf depth. |
+| P10 Change management | Page format version stays 1. Types 4–6 were reserved in Phase 2B and are now the leaf, internal, and overflow layouts. |
+| P12 Testing | Page round-trip, split and merge, overflow, two keyspaces, a 1M-op comparison with a map, and concurrent readers run under `go test -race`. |
+| P13 Documentation | [ADR 0005](adr/0005-btree.md) and the B+tree section of [spec/pages.md](spec/pages.md). |
+| P1 Durability | Not yet. Overflow and split writes can leak a page on a crash. Acknowledged commits wait on the WAL. |
+| P2, P3, P5–P9, P11 | Not yet applicable. Transactions, recovery, and the server are later phases. |
+
 ### Phase 2B — Page file and buffer pool (2026-09-25)
 
 - **2B.1** `storage/disk.PageFile` creates and opens a heap file. Page 0 is the header (`GRDB`, format version 1, page size, database id, creation time, checkpoint LSN, freelist head, page count, and a root slot per keyspace). `ReadPage`, `WritePage`, `Allocate`, `Free`, `Sync`, and `Truncate` operate on the other pages. Each page ends with a CRC32C trailer. A newer format version is refused from the first 36 bytes, before the checksum is checked. The default page size is 8 KiB; the size is fixed at creation.
 - **2B.2** `storage/disk.Pool` is a fixed frame table. `Get` pins a page, the last `Unpin` marks it most recently used, and eviction takes the least recently unpinned frame, writing it back when it is dirty. `FlushAll` writes the dirty list and syncs. Stats expose hits, misses, evictions, flushes, and the hit ratio. Hooks report the same events and must not call back into the pool.
 - **2B.3** `storage/disk/fs` wraps `os.File`. `Fault` fails the next read, write, or sync, short-writes, or queues writes until sync. A queued write is visible to a later read. `Discard` drops the queue.
 
-The shell still uses the memory engine. There is no B+tree and no binary WAL yet.
+The shell still uses the memory engine. There is no binary WAL yet.
 
 #### Policy compliance
 
