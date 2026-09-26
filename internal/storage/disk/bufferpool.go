@@ -301,6 +301,30 @@ func (pg *Page) Data() ([]byte, error) {
 	return raw[:len(raw):len(raw)], nil
 }
 
+// Type is the page kind stored in the frame header.
+func (pg *Page) Type() (PageType, error) {
+	pg.pool.mu.Lock()
+	defer pg.pool.mu.Unlock()
+	fr, err := pg.frame()
+	if err != nil {
+		return 0, err
+	}
+	return pageTypeOf(fr.buf), nil
+}
+
+// SetType records the page kind and marks the page dirty.
+func (pg *Page) SetType(typ PageType) error {
+	pg.pool.mu.Lock()
+	defer pg.pool.mu.Unlock()
+	fr, err := pg.frame()
+	if err != nil {
+		return err
+	}
+	setPageType(fr.buf, typ)
+	pg.pool.dirtyAdd(pg.idx)
+	return nil
+}
+
 // LSN is the page LSN stored in the frame. Phase 2E publishes it through the WAL.
 func (pg *Page) LSN() (uint64, error) {
 	pg.pool.mu.Lock()

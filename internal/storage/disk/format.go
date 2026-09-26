@@ -1,6 +1,5 @@
-// Package disk is the page file and buffer pool for the on-disk engine.
-// The B+tree and the write-ahead log are later Phase 2 work; they sit on
-// the pages defined here.
+// Package disk is the page file, buffer pool, and B+tree.
+// The write-ahead log is later Phase 2 work. It sits on the pages defined here.
 package disk
 
 import (
@@ -37,15 +36,13 @@ const (
 	TypeHeader PageType = 1
 	// TypeFree is a page on the freelist.
 	TypeFree PageType = 2
-	// TypeData is an opaque payload page. Phase 2C uses the reserved types
-	// below for tree and overflow pages; this phase only writes header, free,
-	// and data.
+	// TypeData is an opaque payload page.
 	TypeData PageType = 3
-	// TypeTreeLeaf is reserved for the B+tree leaf layout.
+	// TypeTreeLeaf is a B+tree leaf.
 	TypeTreeLeaf PageType = 4
-	// TypeTreeInternal is reserved for the B+tree internal layout.
+	// TypeTreeInternal is a B+tree internal page.
 	TypeTreeInternal PageType = 5
-	// TypeOverflow is reserved for values that do not fit in a leaf cell.
+	// TypeOverflow holds the tail of a value that does not fit in a leaf cell.
 	TypeOverflow PageType = 6
 )
 
