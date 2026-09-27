@@ -41,5 +41,5 @@ Phase 2B is the heap the B+tree and the WAL will sit on. The roadmap fixes the o
 ## Follow-up
 
 - Phase 2C laid out leaf, internal, and overflow pages and chose one tree per keyspace ([ADR 0005](0005-btree.md)).
-- Phase 2D frames WAL records with the same CRC32C.
+- Phase 2D framed the binary WAL with the same CRC32C ([ADR 0006](0006-wal.md)).
 - Phase 2E orders WAL durability ahead of these page writes and runs the checkpointer.
