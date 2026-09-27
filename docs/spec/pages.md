@@ -1,6 +1,6 @@
 # Page file
 
-This is the on-disk heap written by `internal/storage/disk`. Format version 1. The page file and buffer pool are [ADR 0004](../adr/0004-page-file.md). Leaf, internal, and overflow pages are the B+tree in [ADR 0005](../adr/0005-btree.md). The WAL is not in this file yet.
+This is the on-disk heap written by `internal/storage/disk`. Format version 1. The page file and buffer pool are [ADR 0004](../adr/0004-page-file.md). Leaf, internal, and overflow pages are the B+tree in [ADR 0005](../adr/0005-btree.md). The binary WAL is a separate file described in [spec/wal.md](wal.md).
 
 Integers are little-endian. Page ids are `uint64`. Page 0 is the file header and is never freed. A page id of zero is also the end of the freelist.
 
