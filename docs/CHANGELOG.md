@@ -4,6 +4,26 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 2D — Binary WAL (2026-09-27)
+
+- **2D.1** `internal/wal` is a segmented redo log. Each record carries an LSN, a transaction id, a type, a payload, and a CRC32C trailer. `Append` buffers. `Sync` fsyncs. A lone `Sync` does not wait; when other committers are already waiting, one fsync covers the batch after a 1 ms window. Segment files are `000000000001.wal` and up, 64 MiB by default. The reader checks the checksum and stops at a torn tail.
+- **2D.2** `wal.Archiver` is called after a segment is sealed and synced. The hook is the extension point for WAL archiving. This phase does not copy segments.
+- **2D.3** Opening a log truncates a torn tail on the last segment and does not return a partial record. A complete record with a bad checksum is corruption. Tests cut the file at every byte and kill the writer at random offsets; every record whose `Sync` returned nil is still there.
+
+The shell still replays the text WAL in `internal/persist`. Applying these records to pages is Phase 2E. Format version of the binary log is 1, separate from the page file.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P1 Durability | A nil `Sync` means every earlier `Append` is on disk and fsynced. A crash before that `Sync` drops the buffered records. Acknowledged commits of the database still wait on Phase 2E to call this before it returns. |
+| P4 Data integrity | Every segment header and every record ends with CRC32C. A bad checksum on a complete record is `Corruption`. A short tail is truncated instead of being returned. |
+| P5 Recoverability | `Open` repairs a torn tail and then iterates only whole records. Replaying from a checkpoint, and deleting old segments, is Phase 2E. |
+| P10 Change management | WAL format version is 1. A newer version is refused with an explicit error before the checksum is checked. |
+| P12 Testing | Round-trip, rotation, archive retry, group commit, every-byte torn tails, and 100 killed writers run under `go test -race`. |
+| P13 Documentation | [ADR 0006](adr/0006-wal.md) and [spec/wal.md](spec/wal.md). |
+| P2, P3, P6–P9, P11 | Not yet applicable. Transactions, constraints, and the server are later phases. |
+
 ### Phase 2C — B+tree (2026-09-26)
 
 - **2C.1** Leaf and internal pages are slotted. Cell bytes grow up from a fixed header and a directory of uint16 offsets grows down from the end of the payload. Keys are stored in full. There is no prefix compression.
@@ -11,7 +31,7 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 - **2C.3** A value longer than a quarter of the page is stored on a chain of overflow pages. The leaf cell keeps the value length and the first page id.
 - **2C.4** A million random puts, deletes, and gets match a reference map. Concurrent readers share the tree with one writer.
 
-The shell still uses the memory engine. There is no binary WAL yet. A crash during a multi-page split is not atomic; durability of a committed update is Phase 2D and 2E. Format version stays 1.
+The shell still uses the memory engine. This phase does not log tree updates. A crash during a multi-page split is not atomic; durability of a committed update waits on the WAL from Phase 2D and the disk engine in Phase 2E. Format version stays 1.
 
 #### Policy compliance
 

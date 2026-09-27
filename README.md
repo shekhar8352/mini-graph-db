@@ -81,6 +81,7 @@ Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist
 | [`internal/storage`](internal/storage) | Key-value engine interface |
 | [`internal/storage/memory`](internal/storage/memory) | In-memory engine (sorted keys per keyspace) |
 | [`internal/storage/disk`](internal/storage/disk) | Page file, buffer pool, and B+tree (not wired to the shell yet) |
+| [`internal/wal`](internal/wal) | Binary write-ahead log (not wired to the shell yet) |
 | [`internal/storage/graphstore`](internal/storage/graphstore) | Nodes, edges, adjacency, indexes, catalog ids |
 | [`internal/graph`](internal/graph) | Facade used by the query executor, shell, and gob snapshots |
 | [`internal/persist`](internal/persist) | Gob snapshot encode/decode and WAL |
@@ -107,7 +108,7 @@ Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]valu
 
 Each `Graph` method auto-commits one transaction on the in-memory engine. A transaction sees the committed snapshot from its start, plus its own writes. Other transactions do not see those writes until commit.
 
-Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk B+tree is one tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)), on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). The shell still runs on the memory engine.
+Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk B+tree is one tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)), on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). A binary WAL can record those updates ([ADR 0006](docs/adr/0006-wal.md), [WAL spec](docs/spec/wal.md)). The shell still runs on the memory engine and the text WAL.
 
 ```
 N  node id            → labels and properties
