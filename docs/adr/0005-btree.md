@@ -38,5 +38,5 @@ The roadmap also leaves prefix compression optional, and it allows either a real
 ## Follow-up
 
 - Phase 2D framed the binary WAL ([ADR 0006](0006-wal.md)).
-- Phase 2E implements `storage/disk.Engine` on this tree and orders WAL durability ahead of page writes.
+- Phase 2E implements `storage/disk.Engine` on this tree and orders WAL durability ahead of page writes ([ADR 0007](0007-disk-engine.md)).
 - Prefix compression, if it is ever worth the complexity, is a later format change.

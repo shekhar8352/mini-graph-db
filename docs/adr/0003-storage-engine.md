@@ -41,5 +41,6 @@ The memory structure is a sorted slice plus a map, not a skip list. Commits are 
 ## Follow-up
 
 - Phase 2C chose one B+tree per keyspace ([ADR 0005](0005-btree.md)).
+- Phase 2E's disk engine passes `storage/enginetest` ([ADR 0007](0007-disk-engine.md)).
 - Phase 3 adds the timestamp oracle, version chains, and first-committer-wins on top of this write set.
-- Phase 2F removes the gob snapshot after the importer exists. 2A does not.
+- Phase 2F removes the gob snapshot after the importer exists ([ADR 0008](0008-legacy-import.md)). 2A does not.
