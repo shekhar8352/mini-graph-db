@@ -176,7 +176,9 @@ func TestExportImportRoundTrip(t *testing.T) {
 
 	snap := g.Export()
 	g2 := New()
-	g2.Import(snap)
+	if err := g2.Import(snap); err != nil {
+		t.Fatal(err)
+	}
 
 	if g2.Stats().Nodes != 2 || g2.Stats().Edges != 1 {
 		t.Fatalf("import stats mismatch: %+v", g2.Stats())
@@ -244,7 +246,9 @@ func TestPropKeyInterningAndNumericIndex(t *testing.T) {
 	}
 	snap := g.Export()
 	g2 := New()
-	g2.Import(snap)
+	if err := g2.Import(snap); err != nil {
+		t.Fatal(err)
+	}
 	got, _ := g2.GetNode(a.ID)
 	id2, ok := got.PropID("name")
 	if !ok || id2 != idA {

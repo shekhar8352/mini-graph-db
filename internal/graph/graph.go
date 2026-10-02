@@ -25,6 +25,11 @@ func New() *Graph {
 	return &Graph{eng: memory.Open()}
 }
 
+// NewWith binds a graph to eng. The caller closes eng.
+func NewWith(eng storage.Engine) *Graph {
+	return &Graph{eng: eng}
+}
+
 // InternPropKey returns the stable id for a property name, assigning one if needed.
 func (g *Graph) InternPropKey(name string) uint32 {
 	var id uint32
@@ -315,7 +320,7 @@ func (g *Graph) Export() Snapshot {
 }
 
 // Import replaces the graph with a snapshot and rebuilds indexes.
-func (g *Graph) Import(s Snapshot) {
+func (g *Graph) Import(s Snapshot) error {
 	snap := graphstore.Snapshot{
 		NextNode: s.NextNode,
 		NextEdge: s.NextEdge,
@@ -327,7 +332,7 @@ func (g *Graph) Import(s Snapshot) {
 	for _, e := range s.Edges {
 		snap.Edges = append(snap.Edges, toStoreEdge(e))
 	}
-	_ = g.write(func(tx storage.Tx) error {
+	return g.write(func(tx storage.Tx) error {
 		return graphstore.Replace(tx, snap)
 	})
 }
