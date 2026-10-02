@@ -2,7 +2,7 @@
 
 An embedded, in-memory **property-graph database** written in Go. It stores labeled nodes and directed labeled edges, each with key-value properties, and is driven by an interactive REPL and a small line-based query language (not full Cypher).
 
-The working set lives in RAM. Durability is optional: a gob snapshot plus an append-only write-ahead log (WAL). Mutating statements are logged; on the next start the last snapshot is loaded and the WAL is replayed.
+The shell keeps the working set in RAM for one session. A durable database is a directory opened with `OpenEngine`. `graphdb migrate` loads an old gob snapshot into that directory.
 
 ```bash
 make test
@@ -14,14 +14,12 @@ Module path: `github.com/shekhar8352/mini-graph-db`. Docs live in [`docs/`](docs
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--data-dir` | `./data` | Directory for snapshot, WAL, and history |
-| `--db` | `<data-dir>/graph.db` | Snapshot file loaded on startup |
-| `--wal` | `<data-dir>/graph.wal` | Append-only log of mutating statements |
+| `--data-dir` | `./data` | Directory for the REPL history file |
 | `--history` | `<data-dir>/graph.history` | REPL command history (up-arrow) |
 | `--log-level` | `info` | `debug`, `info`, `warn`, or `error` |
 | `--log-format` | `text` | `text` or `json` |
 
-Commands: `graphdb` / `graphdb shell` start the REPL; `graphdb version` prints semver and git commit.
+Commands: `graphdb` / `graphdb shell` start the REPL; `graphdb version` prints semver and git commit; `graphdb migrate --from-legacy <snapshot> [--wal <file>] --to <dir>` imports an old gob snapshot.
 In a real terminal the prompt supports line editing: left/right move the cursor, up/down walk history, Tab completes keywords, Ctrl-C cancels the current line, Ctrl-D or `EXIT` leaves the REPL. Piped input uses a plain scanner (no line editor).
 
 ---
@@ -31,14 +29,14 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
 ```
                     ┌─────────────────────────────────────┐
                     │            cmd/graphdb              │
-                    │     cobra: shell | version          │
+                    │  cobra: shell | version | migrate   │
                     │   flags: --data-dir --log-level     │
                     └─────────────────┬───────────────────┘
                                       │
                                       ▼
                     ┌─────────────────────────────────────┐
                     │            internal/repl            │
-                    │  recover snapshot + WAL, then loop  │
+                    │  in-memory session, then loop       │
                     │  TTY → liner   |   pipe → scanner   │
                     └─────────────────┬───────────────────┘
                                       │ one line
@@ -46,18 +44,13 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
                     ┌─────────────────────────────────────┐
                     │           internal/query            │
                     │  lexer → parser → AST → executor    │
-                    └──────────────┬──────────┬───────────┘
-                                   │          │ mutating stmts
-                                   ▼          ▼
-                    ┌──────────────────┐  ┌──────────────────┐
-                    │  internal/graph  │  │ internal/persist │
-                    │  facade          │  │  snapshot + WAL  │
-                    └────────┬─────────┘  └──────────────────┘
-                             ▼
-                    ┌──────────────────┐
-                    │ graphstore +     │
-                    │ storage/memory   │
-                    └──────────────────┘
+                    └─────────────────┬───────────────────┘
+                                      ▼
+                    ┌─────────────────────────────────────┐
+                    │  internal/graph → graphstore        │
+                    │  shell: storage/memory              │
+                    │  migrate: storage/disk.OpenEngine   │
+                    └─────────────────────────────────────┘
 ```
 
 Request path for a typical command:
@@ -65,26 +58,25 @@ Request path for a typical command:
 1. The REPL reads a line (`graph> MATCH person WHERE age > 25`).
 2. `query.Parse` lexes tokens and builds an AST (`MatchStmt`).
 3. `query.Executor` calls the graph facade, which runs the statement as one transaction on the in-memory storage engine (`NodesByLabel` + `WHERE` compare).
-4. If the statement mutated the graph, the raw line is appended to the WAL.
-5. The REPL prints a text table (nodes, edges, neighbors, path, or stats).
+4. The REPL prints a text table (nodes, edges, neighbors, path, or stats).
 
-Packages depend inward only: `cmd` → `repl` → `query` → (`graph`, `persist`) → `graphstore` → `storage`. There are no third-party dependencies in the engine, parser, or persistence layer. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
+Packages depend inward only: `cmd` → `repl` → `query` → `graph` → `graphstore` → `storage`. `graphdb migrate` also calls `internal/compat/gobimport`, which writes `storage/disk`. There are no third-party dependencies in the engine or parser. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
 
 ### Package map
 
 | Path | Role |
 |------|------|
-| [`cmd/graphdb`](cmd/graphdb) | Process entry: cobra CLI (`shell`, `version`) |
-| [`internal/repl`](internal/repl/repl.go) | Prompt, recovery, history, table-formatted output |
+| [`cmd/graphdb`](cmd/graphdb) | Process entry: cobra CLI (`shell`, `migrate`, `version`) |
+| [`internal/repl`](internal/repl/repl.go) | Prompt, history, table-formatted output |
 | [`internal/query`](internal/query) | Lexer, recursive-descent parser, AST, executor |
 | [`internal/value`](internal/value) | Typed values, ordering, key and record encodings |
 | [`internal/storage`](internal/storage) | Key-value engine interface |
 | [`internal/storage/memory`](internal/storage/memory) | In-memory engine (sorted keys per keyspace) |
-| [`internal/storage/disk`](internal/storage/disk) | Page file, buffer pool, and B+tree (not wired to the shell yet) |
-| [`internal/wal`](internal/wal) | Binary write-ahead log (not wired to the shell yet) |
+| [`internal/storage/disk`](internal/storage/disk) | Page file, buffer pool, B+tree, and `OpenEngine` (not used by the shell yet) |
+| [`internal/wal`](internal/wal) | Binary write-ahead log used by the disk engine |
 | [`internal/storage/graphstore`](internal/storage/graphstore) | Nodes, edges, adjacency, indexes, catalog ids |
-| [`internal/graph`](internal/graph) | Facade used by the query executor, shell, and gob snapshots |
-| [`internal/persist`](internal/persist) | Gob snapshot encode/decode and WAL |
+| [`internal/graph`](internal/graph) | Facade used by the query executor and the shell |
+| [`internal/compat/gobimport`](internal/compat/gobimport) | Legacy gob snapshot and text WAL import into a disk database |
 
 ---
 
@@ -97,7 +89,7 @@ Node { ID uint64, Labels []string, Props map[propKeyID]value.Value }
 Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]value.Value }
 ```
 
-- IDs are assigned by the engine, starting at `1`, and never reused within a process lifetime (counters are persisted in the snapshot).
+- IDs are assigned by the engine, starting at `1`, and never reused. Counters live in the catalog keyspace.
 - A node has a set of labels (sorted, unique, possibly empty). `Label()` returns the first label so the legacy one-label language keeps working. An edge has exactly one type, still stored in `Label`.
 - Edges are directed (`From → To`). Multiple edges between the same pair are allowed.
 - Deleting a node **cascades**: every incident inbound and outbound edge is removed.
@@ -108,7 +100,7 @@ Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]valu
 
 Each `Graph` method auto-commits one transaction on the in-memory engine. A transaction sees the committed snapshot from its start, plus its own writes. Other transactions do not see those writes until commit.
 
-Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk B+tree is one tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)), on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). A binary WAL can record those updates ([ADR 0006](docs/adr/0006-wal.md), [WAL spec](docs/spec/wal.md)). The shell still runs on the memory engine and the text WAL.
+Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk engine (`OpenEngine`) keeps one B+tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)) on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). A commit logs those pages to the binary WAL and syncs before it acknowledges ([ADR 0006](docs/adr/0006-wal.md), [ADR 0007](docs/adr/0007-disk-engine.md), [engine spec](docs/spec/engine.md)). The shell still runs on the memory engine. `graphdb migrate` is what writes a disk directory from an old gob snapshot.
 
 ```
 N  node id            → labels and properties
@@ -141,7 +133,7 @@ Each statement is **one line**. Keywords are case-insensitive (`match`, `MATCH`,
 source line
     → Lexer     identifiers, numbers, "strings", { } : , - ->  = != > < >= <=
     → Parser    recursive descent → Stmt (AST)
-    → Executor  Graph / persist calls → Result
+    → Executor  graph calls → Result
     → REPL      tables or a one-line message
 ```
 
@@ -149,7 +141,7 @@ Lexer tokens include identifiers, integers/floats, quoted strings (`\"`, `\\`, `
 
 The parser produces typed statements (`CreateNodeStmt`, `MatchEdgeStmt`, `GetNodeStmt`, …). Unknown commands fail at parse time. The executor never re-parses: it switches on the AST.
 
-Mutating statements (`CREATE`, `UPDATE`, `DELETE`) are WAL-logged after a successful execute. `SAVE` / `LOAD` / reads are not logged. WAL replay calls `ExecString(line, replay=true)` so recovered statements are not appended again.
+Each statement auto-commits one transaction on the in-memory engine. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. That command is Phase 8. Until then, `graphdb migrate` is how an old snapshot becomes a disk database.
 
 ---
 
@@ -217,13 +209,11 @@ DELETE EDGE <id>
 #### Persistence and session
 
 ```
-SAVE <file>     # gob snapshot; truncates the WAL
-LOAD <file>     # replace in-memory graph; truncates the WAL
 HELP
 EXIT            # also QUIT
 ```
 
-Unquoted paths may contain dots and slashes (`SAVE graph.db`, `SAVE data/g.db`). Quoted paths work too (`LOAD "my graph.db"`).
+`SAVE <file>` and `LOAD <file>` are still accepted by the parser. They fail, and the error text is: use `graphdb backup`.
 
 ### Example session
 
@@ -261,21 +251,15 @@ labels: person
 
 ## Persistence
 
-Durability is two files, not a page store.
+The shell does not write a snapshot. The disk engine is a directory: `db` is the heap and `wal/` is the binary log ([ADR 0007](docs/adr/0007-disk-engine.md)).
 
-**Snapshot (`--db`, `SAVE` / `LOAD`)**  
-Full copy of nodes, edges, ID counters, and the property-key intern table, encoded with `encoding/gob`. Format version 1 stores each property with `value.EncodeRecord` and stores every node label. Version 0 snapshots (single label, scalar properties) still load. A newer version is rejected. `Graph.Import` rebuilds adjacency lists and indexes from the snapshot. Default path: `data/graph.db`.
+**Legacy import**
 
-**WAL (`--wal`)**  
-One mutating query line per record, flushed with `Sync`. Default path: `data/graph.wal`. Recovery:
+```bash
+graphdb migrate --from-legacy data/graph.db --wal data/graph.wal --to data/db
+```
 
-1. If the snapshot file exists, load it.
-2. Replay every statement in the WAL (without re-appending).
-3. New mutations append to the WAL until the next `SAVE`, which writes a snapshot and truncates the log.
-
-`LOAD` also truncates the WAL so the restored graph is the new source of truth.
-
-This is the usual “checkpoint + redo log” pattern in miniature: the snapshot is a consistent checkpoint; the WAL is the redo stream since that checkpoint.
+The snapshot is the old gob file (version 0 or 1). The text WAL is optional query lines since that snapshot. The command replays them and writes a new disk directory. A newer gob version is rejected. Details are in [spec/legacy.md](docs/spec/legacy.md).
 
 ---
 
@@ -283,10 +267,8 @@ This is the usual “checkpoint + redo log” pattern in miniature: the snapshot
 
 `repl.Run` owns session lifetime:
 
-1. Construct an empty `graph.Graph`.
-2. Load snapshot if the `--db` path exists.
-3. Open the WAL, replay it, attach it to the executor.
-4. Read-eval-print until `EXIT` or EOF.
+1. Construct an empty in-memory `graph.Graph`.
+2. Read-eval-print until `EXIT` or EOF.
 
 On a TTY, `liner` provides history (persisted to `--history`) and keyword completion (`CREATE NODE`, `MATCH EDGE`, `GET NODE`, …). On a pipe or in tests, `bufio.Scanner` is used so scripts stay deterministic.
 
@@ -310,8 +292,8 @@ make lint          # golangci-lint
 | `internal/storage/memory` | Engine conformance: order, cursors, isolation, crash hooks |
 | `internal/storage/graphstore` | Cascade delete, id allocation, property index |
 | `internal/graph` | CRUD, cascade delete, indexes, export/import, BFS/DFS, shortest path |
-| `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, SAVE/LOAD, WAL replay |
-| `internal/persist` | Gob round-trip of mixed property types; WAL append / read / truncate |
-| `internal/repl` | End-to-end session over a fake stdin; WAL recovery across two runs |
+| `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, SAVE/LOAD rejection |
+| `internal/compat/gobimport` | Gob version 0 and 1, text WAL replay, into a disk directory |
+| `internal/repl` | End-to-end session over a fake stdin |
 
 There are no external services. All tests use `t.TempDir()` for files.

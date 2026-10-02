@@ -4,6 +4,48 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 2F — Migration from legacy formats (2026-10-02)
+
+- **2F.1** `internal/compat/gobimport` reads a gob snapshot (version 0 or 1) and an optional text WAL of query lines, replays those lines, and writes the result with one commit into a new disk database directory.
+- **2F.2** `graphdb migrate --from-legacy <snapshot> [--wal <file>] --to <data-dir>` is that import. The destination must not already contain `db`.
+- **2F.3** `internal/persist` is removed. The shell no longer loads a snapshot or appends a text log. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. `--db` and `--wal` are no longer shell flags.
+
+The shell stays on the memory engine for the session. Format version of the disk heap and the binary WAL stays 1. `graphdb backup` is Phase 8.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P1 Durability | The migrated graph is one disk commit. `Commit` still returns only after the WAL sync and the heap publish. The shell itself does not fsync a snapshot. |
+| P5 Recoverability | Reopening the migrated directory replays from the checkpoint written on close. A crash before that commit does not leave a new `db` when migrate created the directory. |
+| P10 Change management | Legacy snapshot versions 0 and 1 still load. A newer gob version is refused with an explicit error. The disk format version stays 1. |
+| P12 Testing | Version 0, version 1, WAL replay, a newer-version refusal, an existing destination, a bad WAL line, and the migrate command run under `go test -race`. |
+| P13 Documentation | [ADR 0008](adr/0008-legacy-import.md) and [spec/legacy.md](spec/legacy.md). |
+| P2–P4, P6–P9, P11 | Unchanged from Phase 2E. Constraints, authentication, and backup are later phases. |
+
+### Phase 2E — Disk engine assembly and recovery (2026-10-02)
+
+- **2E.1** `storage/disk.OpenEngine` implements `storage.Engine`. A commit logs page images (`TxnBegin`, `PageWrite`, `TxnCommit`), syncs the WAL, and only then writes those pages to the heap. Callers do not see the commit until that sync returns. Snapshot reads use an in-memory undo log over the latest tree.
+- **2E.2** A background checkpointer runs on a 30s interval and after 64 MiB of WAL. It flushes dirty pages, records the durable LSN in the heap header, and deletes sealed segments that end at or before that LSN. The active segment stays. Remaining segment numbers may start above 1.
+- **2E.3** Open replays committed page images from the checkpoint LSN. A newer format version is refused before the checksum. Read-only open rejects a missing heap file and rejects read-write transactions. Replay may still write repaired pages.
+- **2E.4** The disk engine passes `storage/enginetest`. Crash tests cut the WAL at 1000 offsets: a torn tail recovers a prefix of acknowledged commits, and a bad checksum is `Corruption`.
+- **2E.5** Sequential insert, random point read, range scan, and adjacency fan-out baselines are in [test/bench/BASELINES.md](../test/bench/BASELINES.md).
+
+The shell still uses the memory engine and the text WAL. Format version stays 1. Legacy gob import is Phase 2F.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P1 Durability | `Commit` returns nil only after `wal.Sync` and the heap publish. A crash before that sync drops the transaction. A crash after it is repaired by replaying page images. There is no relaxed sync mode. |
+| P2 Consistency | A transaction sees the snapshot from `Begin` plus its own writes. Uncommitted writes stay invisible. The last writer of a key wins. First-committer-wins is Phase 3. |
+| P4 Data integrity | Page and WAL checksums stay CRC32C. A bad checksum on a complete record or page is `Corruption`. A torn WAL tail is truncated and is not returned. |
+| P5 Recoverability | Open replays from the checkpoint LSN and installs only transactions that have `TxnCommit`. Reinstalling an image is a no-op. Checkpoint truncation bounds how much log the next open reads. Backups and point-in-time restore wait on Phase 8. |
+| P10 Change management | Heap and WAL format versions stay 1. A newer version is refused with an explicit error before the checksum is checked. |
+| P12 Testing | `enginetest`, reopen, read-only, format, checksum, checkpoint, and 1000 WAL cut points run under `go test -race`. Baselines are recorded. |
+| P13 Documentation | [ADR 0007](adr/0007-disk-engine.md) and [spec/engine.md](spec/engine.md). |
+| P3, P6–P9, P11 | Not yet applicable. Constraints, authentication, and the server are later phases. |
+
 ### Phase 2D — Binary WAL (2026-09-27)
 
 - **2D.1** `internal/wal` is a segmented redo log. Each record carries an LSN, a transaction id, a type, a payload, and a CRC32C trailer. `Append` buffers. `Sync` fsyncs. A lone `Sync` does not wait; when other committers are already waiting, one fsync covers the batch after a 1 ms window. Segment files are `000000000001.wal` and up, 64 MiB by default. The reader checks the checksum and stops at a torn tail.
