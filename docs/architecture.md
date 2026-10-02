@@ -4,7 +4,7 @@ This is a snapshot of the **pre–Phase 1** architecture of `mini-graph-db`: an 
 
 Phase 1 added `internal/value` and multi-label nodes on top of this baseline. The current type rules are in [spec/values.md](spec/values.md); the README describes the engine as it runs today.
 
-Phase 2A adds `internal/storage` (the engine interface, the in-memory engine, and the conformance suite) and `internal/storage/graphstore`. `internal/graph` is a facade over that engine. Phase 2B adds the page file, buffer pool, and fault-injecting file wrapper in `internal/storage/disk`. Phase 2C adds one B+tree per keyspace on those pages. Phase 2D adds the binary WAL in `internal/wal`. The disk engine that applies that log is still later Phase 2 work. The page layout is [spec/pages.md](spec/pages.md). The log layout is [spec/wal.md](spec/wal.md).
+Phase 2A adds `internal/storage` (the engine interface, the in-memory engine, and the conformance suite) and `internal/storage/graphstore`. `internal/graph` is a facade over that engine. Phase 2B adds the page file, buffer pool, and fault-injecting file wrapper in `internal/storage/disk`. Phase 2C adds one B+tree per keyspace on those pages. Phase 2D adds the binary WAL in `internal/wal`. Phase 2E adds `OpenEngine`, which logs page images and replays them on open ([spec/engine.md](spec/engine.md)). Phase 2F removes `internal/persist` and adds `graphdb migrate` for the old gob snapshot ([spec/legacy.md](spec/legacy.md)). The shell still uses the memory engine. The page layout is [spec/pages.md](spec/pages.md). The log layout is [spec/wal.md](spec/wal.md).
 
 Copied from the README architecture section at the start of Phase 0.
 
@@ -58,10 +58,10 @@ Cross-cutting packages added in Phase 0 (not on the request path):
 | Path | Role |
 |------|------|
 | `cmd/graphdb` | Process entry: cobra commands, flags, start the REPL |
-| `internal/repl` | Prompt, recovery, history, table-formatted output |
+| `internal/repl` | Prompt, history, table-formatted output |
 | `internal/query` | Lexer, recursive-descent parser, AST, executor |
 | `internal/graph` | Property graph, CRUD, indexes, BFS/DFS, shortest path |
-| `internal/persist` | Gob snapshot encode/decode and WAL |
+| `internal/persist` | Gob snapshot encode/decode and text WAL (removed in Phase 2F; import is `internal/compat/gobimport`) |
 | `internal/gerr` | Typed error taxonomy |
 | `internal/logging` | slog handlers |
 | `internal/version` | Version string injected via ldflags |
@@ -76,7 +76,7 @@ Default `--data-dir` is `./data`. Unless overridden:
 | `data/graph.wal` | Text WAL of mutating statements |
 | `data/graph.history` | REPL line history |
 
-`--db`, `--wal`, and `--history` still override individual paths.
+In this baseline, `--db`, `--wal`, and `--history` override individual paths. Phase 2F removed `--db` and `--wal`.
 
 ## What this baseline does not have
 
