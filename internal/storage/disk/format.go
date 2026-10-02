@@ -1,5 +1,5 @@
-// Package disk is the page file, buffer pool, and B+tree.
-// The write-ahead log is later Phase 2 work. It sits on the pages defined here.
+// Package disk is the page file, buffer pool, B+tree, and the durable engine
+// that commits through the write-ahead log.
 package disk
 
 import (

@@ -155,7 +155,7 @@ func TestAbandonDropsUnsyncedRecords(t *testing.T) {
 	if _, err := l.Append(TypeTxnAbort, 1, []byte("nope")); err != nil {
 		t.Fatal(err)
 	}
-	l.abandon()
+	l.Abandon()
 	l2, err := Open(dir, Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -479,7 +479,7 @@ func TestKillWriterAtRandomOffsets(t *testing.T) {
 		if err := l.Sync(); err == nil {
 			acked = append(acked, Record{LSN: lsn, TxnID: 99, Type: TypeTxnCommit, Payload: append([]byte(nil), tail...)})
 		}
-		l.abandon()
+		l.Abandon()
 		l2, err := Open(dir, Options{})
 		if err != nil {
 			t.Fatalf("trial %d: %v", trial, err)

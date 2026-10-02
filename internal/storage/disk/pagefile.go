@@ -31,6 +31,9 @@ type Options struct {
 	// File, when set, is used instead of opening a path. The page file owns
 	// it and closes it. Tests pass a fault-injecting file here.
 	File fs.File
+	// SkipFreelistCheck opens a file whose freelist may not match the header
+	// yet. The disk engine sets this, replays the WAL, then calls CheckFreelist.
+	SkipFreelistCheck bool
 }
 
 // Meta is a copy of the file header.
@@ -64,6 +67,15 @@ type PageFile struct {
 	pageSize int
 	meta     fileMeta
 	closed   bool
+
+	// deferWrites keeps Allocate, Free, and header updates off the real file
+	// until Publish. Reads see staged images. A crash drops the stage and
+	// leaves the file at the last publish.
+	deferWrites bool
+	publishing  bool
+	holding     bool
+	heldMeta    fileMeta
+	staged      map[PageID][]byte
 }
 
 // Create writes a new page file at path. The file must not already exist
@@ -127,7 +139,7 @@ func Open(path string, opts Options) (*PageFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	pf, err := openFile(path, file, opts.PageSize)
+	pf, err := openFile(path, file, opts.PageSize, opts.SkipFreelistCheck)
 	if err != nil {
 		_ = file.Close()
 		return nil, err
@@ -159,7 +171,7 @@ func openOS(path string, file fs.File, create bool) (fs.File, error) {
 	return f, nil
 }
 
-func openFile(path string, file fs.File, wantSize int) (*PageFile, error) {
+func openFile(path string, file fs.File, wantSize int, skipFreelist bool) (*PageFile, error) {
 	info, err := file.Stat()
 	if err != nil {
 		return nil, err
@@ -221,10 +233,146 @@ func openFile(path string, file fs.File, wantSize int) (*PageFile, error) {
 		pageSize: ps,
 		meta:     meta,
 	}
-	if err := pf.checkFreelistLocked(); err != nil {
-		return nil, err
+	if !skipFreelist {
+		if err := pf.checkFreelistLocked(); err != nil {
+			return nil, err
+		}
 	}
 	return pf, nil
+}
+
+// CheckFreelist walks the freelist and reports a mismatch with the header.
+// Open does this unless SkipFreelistCheck is set.
+func (f *PageFile) CheckFreelist() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return ErrClosed
+	}
+	return f.checkFreelistLocked()
+}
+
+// Hold keeps page and header writes in memory. Publish sends them to the file.
+// A second Hold without Publish or Discard is an error.
+func (f *PageFile) Hold() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return ErrClosed
+	}
+	if f.deferWrites {
+		return gerr.New(gerr.Internal, "page file writes are already held")
+	}
+	f.heldMeta = f.meta
+	f.holding = true
+	f.deferWrites = true
+	f.staged = map[PageID][]byte{}
+	return nil
+}
+
+// Discard drops held writes and restores the header meta from Hold.
+// Pages already published are not rolled back.
+func (f *PageFile) Discard() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.holding {
+		f.meta = f.heldMeta
+	}
+	f.holding = false
+	f.deferWrites = false
+	f.staged = nil
+}
+
+// StagedImages returns copies of pages written since Hold, including the header
+// when a meta update staged one. The map is empty when writes are not held.
+func (f *PageFile) StagedImages() map[PageID][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[PageID][]byte, len(f.staged))
+	for id, img := range f.staged {
+		out[id] = append([]byte(nil), img...)
+	}
+	return out
+}
+
+// HeaderImage is a sealed image of the in-memory header.
+func (f *PageFile) HeaderImage() []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.headerImageLocked()
+}
+
+func (f *PageFile) headerImageLocked() []byte {
+	page := blankPage(f.pageSize, 0, TypeHeader, 0)
+	encodeMeta(payload(page), f.meta)
+	seal(page)
+	return page
+}
+
+// ReleaseHold stops deferring writes and returns staged data-page images.
+// The header is omitted. The in-memory meta stays at the held updates.
+func (f *PageFile) ReleaseHold() map[PageID][]byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[PageID][]byte, len(f.staged))
+	for id, img := range f.staged {
+		if id == 0 {
+			continue
+		}
+		out[id] = append([]byte(nil), img...)
+	}
+	f.staged = nil
+	f.deferWrites = false
+	f.holding = false
+	return out
+}
+
+// WriteImageAt writes a full sealed page to the file. It does not update meta.
+func (f *PageFile) WriteImageAt(image []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return ErrClosed
+	}
+	if len(image) != f.pageSize {
+		return gerr.Newf(gerr.InvalidArgument, "page image length %d, want %d", len(image), f.pageSize)
+	}
+	if err := verifyChecksum(image); err != nil {
+		return err
+	}
+	id := pageIDOf(image)
+	return f.writeAtFull(image, f.offset(id))
+}
+
+// InstallImage writes a recovered page. A header image replaces the in-memory meta.
+func (f *PageFile) InstallImage(image []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return ErrClosed
+	}
+	if len(image) != f.pageSize {
+		return gerr.Newf(gerr.Corruption, "recovered page image length %d, want %d", len(image), f.pageSize)
+	}
+	if err := verifyChecksum(image); err != nil {
+		return err
+	}
+	id := pageIDOf(image)
+	if id == 0 {
+		if pageTypeOf(image) != TypeHeader {
+			return corruptionf("recovered page 0 is not a header")
+		}
+		meta, err := decodeMeta(payload(image))
+		if err != nil {
+			return err
+		}
+		if err := f.writeAtFull(image, 0); err != nil {
+			return err
+		}
+		f.meta = meta
+		return nil
+	}
+	return f.writeAtFull(image, f.offset(id))
 }
 
 func le16(b []byte) uint16 {
@@ -711,6 +859,13 @@ func (f *PageFile) checkFreelistLocked() error {
 }
 
 func (f *PageFile) readPageLocked(id PageID) ([]byte, error) {
+	if img, ok := f.staged[id]; ok {
+		cp := append([]byte(nil), img...)
+		if pageIDOf(cp) != id {
+			return nil, corruptionf("staged page %d header says id %d", id, pageIDOf(cp))
+		}
+		return cp, nil
+	}
 	if uint64(id) >= f.meta.pageCount {
 		return nil, gerr.Newf(gerr.NotFound, "page %d is not allocated", id)
 	}
@@ -783,6 +938,17 @@ func (f *PageFile) offsetChecked(id PageID) (int64, error) {
 }
 
 func (f *PageFile) writeAtFull(p []byte, off int64) error {
+	if f.deferWrites && !f.publishing {
+		if f.pageSize == 0 || len(p) != f.pageSize || off%int64(f.pageSize) != 0 {
+			return gerr.New(gerr.Internal, "deferred page write is not a full page")
+		}
+		id := PageID(off / int64(f.pageSize))
+		if f.staged == nil {
+			f.staged = map[PageID][]byte{}
+		}
+		f.staged[id] = append([]byte(nil), p...)
+		return nil
+	}
 	if err := writeFull(f.f, p, off); err != nil {
 		return gerr.Wrap(gerr.Unavailable, "write page", err)
 	}

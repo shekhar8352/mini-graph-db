@@ -96,8 +96,10 @@ type waiter struct {
 }
 
 // Open creates dir if needed and opens the log stored there.
-// Segment files are named 000000000001.wal and up. A torn tail on the last
-// segment is truncated. A bad checksum on a complete record is corruption.
+// A new log starts at 000000000001.wal. After Truncate, the oldest remaining
+// segment may have a higher number; the numbers that remain do not skip.
+// A torn tail on the last segment is truncated. A bad checksum on a complete
+// record is corruption.
 func Open(dir string, opt Options) (*Log, error) {
 	if dir == "" {
 		return nil, gerr.New(gerr.InvalidArgument, "wal directory is empty")
@@ -129,29 +131,33 @@ func Open(dir string, opt Options) (*Log, error) {
 		}
 		return l, nil
 	}
-	expect := LSN(1)
+	expect := LSN(0)
 	for i, name := range names {
+		num, ok := parseSegmentName(name)
+		if !ok {
+			return nil, gerr.Newf(gerr.Corruption, "wal segment name %s is not a segment", name)
+		}
 		path := filepath.Join(dir, name)
 		last := i == len(names)-1
-		end, deleted, err := repairSegment(path, uint64(i+1), expect, last)
+		first, end, deleted, err := repairSegment(path, num, expect, last)
 		if err != nil {
 			return nil, err
 		}
 		if deleted {
 			if !last {
-				return nil, gerr.Newf(gerr.Corruption, "wal segment %d lost its header", i+1)
+				return nil, gerr.Newf(gerr.Corruption, "wal segment %d lost its header", num)
 			}
 			break
 		}
 		if last {
-			if err := l.reopenLast(path, uint64(i+1), expect, end); err != nil {
+			if err := l.reopenLast(path, num, first, end); err != nil {
 				return nil, err
 			}
 		} else {
 			l.sealed = append(l.sealed, SegmentInfo{
-				Number: uint64(i + 1),
+				Number: num,
 				Path:   path,
-				First:  expect,
+				First:  first,
 				End:    end,
 			})
 		}
@@ -321,11 +327,44 @@ func (l *Log) Close() error {
 	return cerr
 }
 
-// abandon drops the buffer and closes the file without syncing.
-// Tests use it as a process crash.
-func (l *Log) abandon() {
+// Truncate removes sealed segments whose records end at or before lsn.
+// The active segment stays. A segment the archive hook has not accepted stays.
+// Removing a segment is durable after the directory is synced.
+// Truncate deletes sealed segments whose end LSN is at or before before.
+// The active segment and a segment waiting on the archive hook stay.
+// Remaining segment numbers stay contiguous and may start above 1.
+func (l *Log) Truncate(before LSN) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	if l.closed {
+		return ErrClosed
+	}
+	keep := make([]SegmentInfo, 0, len(l.sealed))
+	for i, s := range l.sealed {
+		pending := l.pending != nil && s.Number == l.pending.Number
+		if pending || s.End > before {
+			keep = append(keep, s)
+			continue
+		}
+		if err := os.Remove(s.Path); err != nil && !os.IsNotExist(err) {
+			keep = append(keep, l.sealed[i:]...)
+			l.sealed = keep
+			return gerr.Wrap(gerr.Unavailable, "remove wal segment", err)
+		}
+	}
+	l.sealed = keep
+	return syncDir(l.dir)
+}
+
+// Abandon drops the buffer and closes the file without syncing.
+// It simulates a process crash. A second call is a no-op.
+// Records covered by a successful Sync stay on disk.
+func (l *Log) Abandon() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.closed {
+		return
+	}
 	l.closed = true
 	l.buf = nil
 	l.flushing = false
@@ -584,9 +623,9 @@ func listSegments(dir string) ([]string, error) {
 			return nil, gerr.New(gerr.Corruption, "wal segment names are out of order")
 		}
 	}
-	for i, n := range nums {
-		if n != uint64(i+1) {
-			return nil, gerr.Newf(gerr.Corruption, "wal segment numbers skip %d", i+1)
+	for i := 1; i < len(nums); i++ {
+		if nums[i] != nums[i-1]+1 {
+			return nil, gerr.Newf(gerr.Corruption, "wal segment numbers skip %d", nums[i-1]+1)
 		}
 	}
 	return names, nil
@@ -625,45 +664,45 @@ func syncDir(dir string) error {
 	return nil
 }
 
-func repairSegment(path string, num uint64, expect LSN, last bool) (end LSN, deleted bool, err error) {
+func repairSegment(path string, num uint64, expect LSN, last bool) (first, end LSN, deleted bool, err error) {
 	f, err := os.OpenFile(path, os.O_RDWR, 0)
 	if err != nil {
-		return 0, false, gerr.Wrap(gerr.Unavailable, "open wal segment", err)
+		return 0, 0, false, gerr.Wrap(gerr.Unavailable, "open wal segment", err)
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return 0, false, gerr.Wrap(gerr.Unavailable, "stat wal segment", err)
+		return 0, 0, false, gerr.Wrap(gerr.Unavailable, "stat wal segment", err)
 	}
 	first, tornHeader, err := readHeader(f, info.Size(), num, expect, last)
 	if err != nil {
-		return 0, false, err
+		return 0, 0, false, err
 	}
 	if tornHeader {
 		if !last {
-			return 0, false, gerr.Newf(gerr.Corruption, "wal segment %d has a torn header", num)
+			return 0, 0, false, gerr.Newf(gerr.Corruption, "wal segment %d has a torn header", num)
 		}
 		if err := f.Close(); err != nil {
-			return 0, false, gerr.Wrap(gerr.Unavailable, "close torn wal segment", err)
+			return 0, 0, false, gerr.Wrap(gerr.Unavailable, "close torn wal segment", err)
 		}
 		if err := os.Remove(path); err != nil {
-			return 0, false, gerr.Wrap(gerr.Unavailable, "remove torn wal segment", err)
+			return 0, 0, false, gerr.Wrap(gerr.Unavailable, "remove torn wal segment", err)
 		}
-		return expect, true, nil
+		return expect, expect, true, nil
 	}
 	end, tornAt, err := scanRecords(f, info.Size(), first, last)
 	if err != nil {
-		return 0, false, err
+		return 0, 0, false, err
 	}
 	if tornAt > 0 {
 		if err := f.Truncate(tornAt); err != nil {
-			return 0, false, gerr.Wrap(gerr.Unavailable, "truncate torn wal tail", err)
+			return 0, 0, false, gerr.Wrap(gerr.Unavailable, "truncate torn wal tail", err)
 		}
 		if err := f.Sync(); err != nil {
-			return 0, false, gerr.Wrap(gerr.Unavailable, "sync truncated wal segment", err)
+			return 0, 0, false, gerr.Wrap(gerr.Unavailable, "sync truncated wal segment", err)
 		}
 	}
-	return end, false, nil
+	return first, end, false, nil
 }
 
 func readHeader(f *os.File, size int64, num uint64, expect LSN, allowTorn bool) (first LSN, torn bool, err error) {
@@ -710,7 +749,9 @@ func readHeader(f *os.File, size int64, num uint64, expect LSN, allowTorn bool) 
 		return 0, false, gerr.Newf(gerr.Corruption, "wal segment %d is numbered %d", num, fileNum)
 	}
 	first = LSN(binary.LittleEndian.Uint64(buf[16:24]))
-	if first != expect {
+	// expect 0 accepts the LSN stored in the header. Open uses that for the
+	// oldest segment, which may start past 1 after a checkpoint deletes earlier files.
+	if expect != 0 && first != expect {
 		return 0, false, gerr.Newf(gerr.Corruption, "wal segment %d starts at lsn %d, want %d", num, first, expect)
 	}
 	return first, false, nil
