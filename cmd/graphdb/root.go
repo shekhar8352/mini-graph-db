@@ -1,4 +1,4 @@
-// Command graphdb is the mini-graph-db CLI (shell and version in Phase 0).
+// Command graphdb is the mini-graph-db CLI.
 package main
 
 import (
@@ -12,16 +12,12 @@ import (
 )
 
 const (
-	defaultDataDir  = "data"
-	defaultSnapshot = "graph.db"
-	defaultWAL      = "graph.wal"
-	defaultHistory  = "graph.history"
-	flagDataDir     = "data-dir"
-	flagDB          = "db"
-	flagWAL         = "wal"
-	flagHistory     = "history"
-	flagLogLevel    = "log-level"
-	flagLogFormat   = "log-format"
+	defaultDataDir = "data"
+	defaultHistory = "graph.history"
+	flagDataDir    = "data-dir"
+	flagHistory    = "history"
+	flagLogLevel   = "log-level"
+	flagLogFormat  = "log-format"
 )
 
 func main() {
@@ -41,9 +37,7 @@ func newRootCmd() *cobra.Command {
 		// `graphdb` with no subcommand starts the shell (Phase 0 default).
 		RunE: runShell,
 	}
-	cmd.PersistentFlags().String(flagDataDir, defaultDataDir, "directory for snapshot, WAL, and history files")
-	cmd.PersistentFlags().String(flagDB, "", "snapshot file (default <data-dir>/graph.db)")
-	cmd.PersistentFlags().String(flagWAL, "", "append-only write-ahead log (default <data-dir>/graph.wal)")
+	cmd.PersistentFlags().String(flagDataDir, defaultDataDir, "directory for the REPL history file")
 	cmd.PersistentFlags().String(flagHistory, "", "REPL command history (default <data-dir>/graph.history)")
 	cmd.PersistentFlags().String(flagLogLevel, "info", "log level: debug, info, warn, error")
 	cmd.PersistentFlags().String(flagLogFormat, "text", "log format: text or json")
@@ -65,7 +59,7 @@ func newRootCmd() *cobra.Command {
 		return err
 	}
 
-	cmd.AddCommand(newShellCmd(), newVersionCmd())
+	cmd.AddCommand(newShellCmd(), newMigrateCmd(), newVersionCmd())
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	return cmd
 }
