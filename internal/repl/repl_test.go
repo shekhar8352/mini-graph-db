@@ -2,7 +2,6 @@ package repl
 
 import (
 	"bytes"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -44,27 +43,14 @@ func TestREPLSession(t *testing.T) {
 	}
 }
 
-func TestREPLRecoverWAL(t *testing.T) {
-	dir := t.TempDir()
-	db := filepath.Join(dir, "g.db")
-	wal := filepath.Join(dir, "g.wal")
-
-	in1 := strings.NewReader(`CREATE NODE person {name: "Alice"}` + "\nEXIT\n")
-	var out1 bytes.Buffer
-	if err := Run(Config{DBPath: db, WALPath: wal, In: in1, Out: &out1}); err != nil {
+func TestREPLSaveIsRejected(t *testing.T) {
+	in := strings.NewReader("CREATE NODE person {name: \"Alice\"}\nSAVE g.db\nEXIT\n")
+	var out bytes.Buffer
+	if err := Run(Config{In: in, Out: &out}); err != nil {
 		t.Fatal(err)
 	}
-
-	in2 := strings.NewReader("MATCH person\nEXIT\n")
-	var out2 bytes.Buffer
-	if err := Run(Config{DBPath: db, WALPath: wal, In: in2, Out: &out2}); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out2.String(), "Alice") {
-		t.Fatalf("expected wal replay, got: %s", out2.String())
-	}
-	if !strings.Contains(out2.String(), "replayed") {
-		t.Fatalf("expected replay notice: %s", out2.String())
+	if !strings.Contains(out.String(), "use `graphdb backup`") {
+		t.Fatalf("expected backup hint, got: %s", out.String())
 	}
 }
 

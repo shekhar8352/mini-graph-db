@@ -7,7 +7,6 @@ import (
 
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
-	"github.com/shekhar8352/mini-graph-db/internal/persist"
 )
 
 // Result is the outcome of executing a statement.
@@ -23,36 +22,25 @@ type Result struct {
 	Exit      bool
 }
 
-// Executor runs parsed statements against a graph, optionally logging mutations.
+// Executor runs parsed statements against a graph.
 // The graph is the in-memory storage engine: every statement runs through
 // graphstore on a storage.Tx.
 type Executor struct {
-	G   *graph.Graph
-	WAL *persist.WAL
+	G *graph.Graph
 }
 
-// NewExecutor binds a graph and optional WAL.
-func NewExecutor(g *graph.Graph, wal *persist.WAL) *Executor {
-	return &Executor{G: g, WAL: wal}
+// NewExecutor binds a graph.
+func NewExecutor(g *graph.Graph) *Executor {
+	return &Executor{G: g}
 }
 
-// ExecString parses and runs a single line. When replay is true, mutations are
-// not written back to the WAL (used when restoring from the log).
-func (e *Executor) ExecString(line string, replay bool) (Result, error) {
+// ExecString parses and runs a single line.
+func (e *Executor) ExecString(line string) (Result, error) {
 	stmt, err := Parse(line)
 	if err != nil {
 		return Result{}, err
 	}
-	res, err := e.Exec(stmt)
-	if err != nil {
-		return Result{}, err
-	}
-	if res.Mutating && !replay {
-		if err := e.WAL.Append(strings.TrimSpace(line)); err != nil {
-			return Result{}, fmt.Errorf("wal append: %w", err)
-		}
-	}
-	return res, nil
+	return e.Exec(stmt)
 }
 
 // Exec runs a parsed statement.
@@ -189,26 +177,8 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 		return Result{Kind: "help", Message: helpText}, nil
 	case ExitStmt:
 		return Result{Kind: "exit", Message: "bye", Exit: true}, nil
-	case SaveStmt:
-		if err := persist.Save(e.G, s.Path); err != nil {
-			return Result{}, err
-		}
-		if e.WAL != nil {
-			if err := e.WAL.Truncate(); err != nil {
-				return Result{}, fmt.Errorf("truncate wal: %w", err)
-			}
-		}
-		return Result{Kind: "message", Message: "saved " + s.Path}, nil
-	case LoadStmt:
-		if err := persist.Load(e.G, s.Path); err != nil {
-			return Result{}, err
-		}
-		if e.WAL != nil {
-			if err := e.WAL.Truncate(); err != nil {
-				return Result{}, fmt.Errorf("truncate wal: %w", err)
-			}
-		}
-		return Result{Kind: "message", Message: "loaded " + s.Path}, nil
+	case SaveStmt, LoadStmt:
+		return Result{}, gerr.New(gerr.InvalidArgument, "use `graphdb backup`")
 	default:
 		return Result{}, gerr.New(gerr.Internal, "unhandled statement")
 	}
@@ -246,8 +216,6 @@ const helpText = `Commands:
   DELETE NODE <id>
   DELETE EDGE <id>
   SHOW STATS
-  SAVE <file>
-  LOAD <file>
   HELP
   EXIT
 

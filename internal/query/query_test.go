@@ -1,12 +1,11 @@
 package query
 
 import (
-	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
-	"github.com/shekhar8352/mini-graph-db/internal/persist"
 )
 
 func TestParseTable(t *testing.T) {
@@ -114,13 +113,13 @@ func TestParseCreateNodeProps(t *testing.T) {
 }
 
 func TestExecCRUDAndMatch(t *testing.T) {
-	e := NewExecutor(graph.New(), nil)
+	e := NewExecutor(graph.New())
 	mustExec(t, e, `CREATE NODE person {name: "Alice", age: 30}`)
 	mustExec(t, e, `CREATE NODE person {name: "Bob", age: 20}`)
 	mustExec(t, e, `CREATE NODE company {name: "Acme"}`)
 	mustExec(t, e, `CREATE EDGE 1 -KNOWS-> 2 {since: 2020}`)
 
-	res, err := e.ExecString(`MATCH person WHERE age > 25`, false)
+	res, err := e.ExecString(`MATCH person WHERE age > 25`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +127,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("match >: %+v", res.Nodes)
 	}
 
-	res, err = e.ExecString(`MATCH person WHERE name = "Bob"`, false)
+	res, err = e.ExecString(`MATCH person WHERE name = "Bob"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +135,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("match =: %+v", res.Nodes)
 	}
 
-	res, err = e.ExecString(`NEIGHBORS 1 DEPTH 1`, false)
+	res, err = e.ExecString(`NEIGHBORS 1 DEPTH 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,7 +143,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("neighbors: %+v", res.Neighbors)
 	}
 
-	res, err = e.ExecString(`PATH 1 TO 2`, false)
+	res, err = e.ExecString(`PATH 1 TO 2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,7 +151,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("path: %+v", res.Path)
 	}
 
-	res, err = e.ExecString(`EDGES 1 TO 2`, false)
+	res, err = e.ExecString(`EDGES 1 TO 2`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +159,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("edges between: %+v", res.Edges)
 	}
 
-	res, err = e.ExecString(`MATCH EDGE KNOWS WHERE since >= 2020`, false)
+	res, err = e.ExecString(`MATCH EDGE KNOWS WHERE since >= 2020`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +167,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("match edge: %+v", res.Edges)
 	}
 
-	res, err = e.ExecString(`GET NODE 1`, false)
+	res, err = e.ExecString(`GET NODE 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +175,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("get node: %+v", res.Nodes)
 	}
 
-	res, err = e.ExecString(`GET EDGE 1`, false)
+	res, err = e.ExecString(`GET EDGE 1`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,7 +183,7 @@ func TestExecCRUDAndMatch(t *testing.T) {
 		t.Fatalf("get edge: %+v", res.Edges)
 	}
 
-	if _, err := e.ExecString(`GET NODE 99`, false); err == nil {
+	if _, err := e.ExecString(`GET NODE 99`); err == nil {
 		t.Fatal("expected missing node error")
 	} else if !gerr.IsCode(err, gerr.NotFound) {
 		t.Fatalf("expected NotFound, got %v", err)
@@ -196,54 +195,16 @@ func TestExecCRUDAndMatch(t *testing.T) {
 	}
 }
 
-func TestSaveLoadViaExecutor(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "g.db")
-	e := NewExecutor(graph.New(), nil)
-	mustExec(t, e, `CREATE NODE person {name: "Alice"}`)
-	mustExec(t, e, `CREATE NODE person {name: "Bob"}`)
-	mustExec(t, e, `CREATE EDGE 1 -KNOWS-> 2`)
-	if _, err := e.ExecString(`SAVE `+path, false); err != nil {
-		t.Fatal(err)
-	}
-
-	e2 := NewExecutor(graph.New(), nil)
-	if _, err := e2.ExecString(`LOAD `+path, false); err != nil {
-		t.Fatal(err)
-	}
-	res, err := e2.ExecString(`MATCH person`, false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Nodes) != 2 {
-		t.Fatalf("loaded %d nodes", len(res.Nodes))
-	}
-}
-
-func TestWALReplay(t *testing.T) {
-	dir := t.TempDir()
-	walPath := filepath.Join(dir, "g.wal")
-	wal, err := persist.OpenWAL(walPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	e := NewExecutor(graph.New(), wal)
-	mustExec(t, e, `CREATE NODE person {name: "Alice"}`)
-	if err := wal.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	lines, err := persist.ReadWAL(walPath)
-	if err != nil || len(lines) != 1 {
-		t.Fatalf("wal lines=%v err=%v", lines, err)
-	}
-
-	e2 := NewExecutor(graph.New(), nil)
-	if _, err := e2.ExecString(lines[0], true); err != nil {
-		t.Fatal(err)
-	}
-	if e2.G.Stats().Nodes != 1 {
-		t.Fatal("replay failed")
+func TestSaveLoadRejected(t *testing.T) {
+	e := NewExecutor(graph.New())
+	for _, line := range []string{`SAVE graph.db`, `LOAD "my graph.db"`} {
+		_, err := e.ExecString(line)
+		if err == nil || !strings.Contains(err.Error(), "use `graphdb backup`") {
+			t.Fatalf("%s: %v", line, err)
+		}
+		if !gerr.IsCode(err, gerr.InvalidArgument) {
+			t.Fatalf("%s code: %v", line, err)
+		}
 	}
 }
 
@@ -265,12 +226,12 @@ func TestParseSyntaxCode(t *testing.T) {
 }
 
 func TestHelpAndExit(t *testing.T) {
-	e := NewExecutor(graph.New(), nil)
-	h, err := e.ExecString("HELP", false)
+	e := NewExecutor(graph.New())
+	h, err := e.ExecString("HELP")
 	if err != nil || h.Kind != "help" {
 		t.Fatalf("help: %+v %v", h, err)
 	}
-	x, err := e.ExecString("QUIT", false)
+	x, err := e.ExecString("QUIT")
 	if err != nil || !x.Exit {
 		t.Fatalf("quit: %+v %v", x, err)
 	}
@@ -296,7 +257,7 @@ func edgeProp(e graph.Edge, key string, want int64) bool {
 
 func mustExec(t *testing.T, e *Executor, line string) {
 	t.Helper()
-	if _, err := e.ExecString(line, false); err != nil {
+	if _, err := e.ExecString(line); err != nil {
 		t.Fatalf("%s: %v", line, err)
 	}
 }
