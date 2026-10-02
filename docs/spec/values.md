@@ -160,7 +160,7 @@ Kind-preserving, not ordered. The first byte is the format version (`1`). A newe
 - strings and byte strings are length-prefixed
 - lists and maps nest records; map entries are written in key order
 
-The gob snapshot (format version 1) stores property values with this encoding. See the changelog for the version-0 layout, which still loads.
+The legacy gob snapshot (format version 1) stores property values with this encoding. `graphdb migrate` still reads it, and still reads the version-0 layout. See [spec/legacy.md](legacy.md).
 
 ## Legacy coercions
 

@@ -1,8 +1,8 @@
 # Write-ahead log
 
-This is the binary redo log written by `internal/wal`. Format version 1. The decision record is [ADR 0006](../adr/0006-wal.md). The page file that will store LSNs from this log is [spec/pages.md](pages.md). Nothing in the shell reads these files yet.
+This is the binary redo log written by `internal/wal`. Format version 1. The decision record is [ADR 0006](../adr/0006-wal.md). The disk engine applies it in [spec/engine.md](engine.md). The page file is [spec/pages.md](pages.md). The shell does not read this log. A legacy text WAL is replayed only by `graphdb migrate` ([spec/legacy.md](legacy.md)).
 
-Integers are little-endian. Segment files live in one directory and are named `000000000001.wal`, `000000000002.wal`, and so on. Names that do not match that pattern are ignored. Numbers start at 1 and do not skip. The log does not delete segments.
+Integers are little-endian. Segment files live in one directory and are named `000000000001.wal`, `000000000002.wal`, and so on. Names that do not match that pattern are ignored. A new log starts at segment 1. `Truncate` deletes sealed segments whose end LSN is at or before the cutoff, so the oldest remaining number may be greater than 1. The numbers that remain do not skip. A hole is corruption. The active segment is kept.
 
 ## Segment header
 
