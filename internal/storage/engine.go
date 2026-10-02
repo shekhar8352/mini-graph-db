@@ -1,12 +1,12 @@
 // Package storage is the key-value engine interface shared by the in-memory
-// engine and, later, the page-based engine. Graph semantics live in graphstore.
+// engine and the page-based disk engine. Graph semantics live in graphstore.
 package storage
 
 import "errors"
 
 // Keyspace is one ordered key range. The memory engine stores each keyspace
-// in its own map. Whether the disk engine uses one B+tree or one tree per
-// keyspace is left to Phase 2C; callers never encode that choice into keys.
+// in its own map. The disk engine stores each one in its own B+tree.
+// Callers never encode that choice into keys.
 type Keyspace byte
 
 // Keyspace identifiers match the roadmap names. KSVersion is reserved for

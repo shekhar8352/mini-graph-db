@@ -265,6 +265,81 @@ func (p *Pool) FlushAll() error {
 	return p.file.Sync()
 }
 
+// DirtyImages returns sealed copies of dirty frames. The frames stay dirty.
+func (p *Pool) DirtyImages() (map[PageID][]byte, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil, ErrClosed
+	}
+	out := make(map[PageID][]byte)
+	n := 0
+	for idx := p.dirtyHead; idx >= 0; idx = p.frames[idx].dirtyNext {
+		n++
+		if n > len(p.frames) {
+			return nil, gerr.New(gerr.Corruption, "buffer pool dirty list is cyclic")
+		}
+		fr := &p.frames[idx]
+		seal(fr.buf)
+		out[fr.id] = append([]byte(nil), fr.buf...)
+	}
+	return out, nil
+}
+
+// Invalidate drops cached frames. It returns an error if any frame is pinned.
+// The next Get loads from the file.
+func (p *Pool) Invalidate() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return ErrClosed
+	}
+	for i := range p.frames {
+		if p.frames[i].pin > 0 {
+			return gerr.New(gerr.Internal, "buffer pool is pinned")
+		}
+	}
+	p.index = map[PageID]int{}
+	p.free = p.free[:0]
+	p.lruHead = -1
+	p.lruTail = -1
+	p.dirtyHead = -1
+	for i := range p.frames {
+		fr := &p.frames[i]
+		fr.used = false
+		fr.dirty = false
+		fr.pin = 0
+		fr.id = 0
+		fr.buf = nil
+		fr.lruPrev = -1
+		fr.lruNext = -1
+		fr.dirtyPrev = -1
+		fr.dirtyNext = -1
+		p.free = append(p.free, i)
+	}
+	return nil
+}
+
+// Abandon drops dirty frames without writing them and rejects later use.
+// It simulates a process crash. The page file stays open.
+func (p *Pool) Abandon() {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return
+	}
+	p.closed = true
+	p.dirtyHead = -1
+	p.index = map[PageID]int{}
+	for i := range p.frames {
+		p.frames[i].dirty = false
+		p.frames[i].pin = 0
+		p.frames[i].buf = nil
+		p.frames[i].used = false
+		p.frames[i].id = 0
+	}
+}
+
 // Close writes dirty frames and rejects later use. The page file stays open.
 func (p *Pool) Close() error {
 	p.mu.Lock()

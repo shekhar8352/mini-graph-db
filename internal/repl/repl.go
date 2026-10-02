@@ -15,15 +15,12 @@ import (
 	"github.com/peterh/liner"
 
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
-	"github.com/shekhar8352/mini-graph-db/internal/persist"
 	"github.com/shekhar8352/mini-graph-db/internal/query"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
-// Config controls snapshot/WAL recovery for a REPL session.
+// Config controls one REPL session. The graph lives in memory for the session.
 type Config struct {
-	DBPath      string
-	WALPath     string
 	HistoryPath string
 	In          io.Reader
 	Out         io.Writer
@@ -38,44 +35,7 @@ func Run(cfg Config) error {
 		cfg.Out = os.Stdout
 	}
 
-	g := graph.New()
-	if cfg.DBPath != "" {
-		if _, err := os.Stat(cfg.DBPath); err == nil {
-			if err := persist.Load(g, cfg.DBPath); err != nil {
-				return fmt.Errorf("load snapshot: %w", err)
-			}
-			slog.Info("loaded snapshot", "path", cfg.DBPath)
-			fmt.Fprintf(cfg.Out, "loaded snapshot %s\n", cfg.DBPath)
-		}
-	}
-
-	var wal *persist.WAL
-	if cfg.WALPath != "" {
-		var err error
-		wal, err = persist.OpenWAL(cfg.WALPath)
-		if err != nil {
-			return fmt.Errorf("open wal: %w", err)
-		}
-		defer func() { _ = wal.Close() }()
-	}
-
-	exec := query.NewExecutor(g, wal)
-
-	if cfg.WALPath != "" {
-		lines, err := persist.ReadWAL(cfg.WALPath)
-		if err != nil {
-			return fmt.Errorf("read wal: %w", err)
-		}
-		for _, line := range lines {
-			if _, err := exec.ExecString(line, true); err != nil {
-				return fmt.Errorf("replay %q: %w", line, err)
-			}
-		}
-		if len(lines) > 0 {
-			slog.Info("replayed wal", "path", cfg.WALPath, "statements", len(lines))
-			fmt.Fprintf(cfg.Out, "replayed %d wal statement(s)\n", len(lines))
-		}
-	}
+	exec := query.NewExecutor(graph.New())
 
 	fmt.Fprintln(cfg.Out, "mini-graph-db  type HELP for commands")
 	if isTerminal(cfg.In) {
@@ -169,7 +129,7 @@ func runScanner(cfg Config, exec *query.Executor) error {
 }
 
 func handleLine(out io.Writer, exec *query.Executor, line string) error {
-	res, err := exec.ExecString(line, false)
+	res, err := exec.ExecString(line)
 	if err != nil {
 		fmt.Fprintf(out, "error: %v\n", err)
 		return nil
@@ -199,8 +159,6 @@ func commandCompleter(line string) []string {
 		"DELETE NODE ",
 		"DELETE EDGE ",
 		"SHOW STATS",
-		"SAVE ",
-		"LOAD ",
 		"HELP",
 		"EXIT",
 	}

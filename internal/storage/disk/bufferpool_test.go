@@ -1,6 +1,7 @@
 package disk
 
 import (
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -265,11 +266,13 @@ func TestPoolConcurrentReaders(t *testing.T) {
 			for n := 0; n < 50; n++ {
 				var pg *Page
 				var err error
-				for attempt := 0; attempt < 100; attempt++ {
+				for attempt := 0; attempt < 10000; attempt++ {
 					pg, err = pool.Get(ids[n%len(ids)])
 					if err == nil || !gerr.IsCode(err, gerr.ResourceExhausted) {
 						break
 					}
+					// A tight retry holds the pool lock and starves Unpin.
+					runtime.Gosched()
 				}
 				if err != nil {
 					t.Errorf("get: %v", err)
