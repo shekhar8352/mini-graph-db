@@ -57,5 +57,5 @@ The directory is `{dir}/db` for the heap and `{dir}/wal/*.wal` for the log. The 
 ## Follow-up
 
 - Phase 2F imports the legacy gob snapshot ([ADR 0008](0008-legacy-import.md)). The shell stays on the memory engine. `internal/persist` is gone.
-- Phase 3 adds first-committer-wins. This engine still lets the last writer win.
+- First-committer-wins is the manager in [ADR 0009](0009-mvcc.md). This engine still lets the last writer win. `TxnCommit` stays an empty payload; the manager's write set is the page images of one storage commit.
 - Phase 8 can copy sealed segments through `wal.Archiver`. Truncate must keep a segment the archiver has not finished.
