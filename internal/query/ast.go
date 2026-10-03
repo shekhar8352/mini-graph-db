@@ -107,6 +107,20 @@ type LoadStmt struct {
 	Path string
 }
 
+// BeginStmt is BEGIN [READ ONLY].
+type BeginStmt struct {
+	ReadOnly bool
+}
+
+// CommitStmt is COMMIT.
+type CommitStmt struct{}
+
+// RollbackStmt is ROLLBACK.
+type RollbackStmt struct{}
+
+// VacuumStmt is VACUUM.
+type VacuumStmt struct{}
+
 func (CreateNodeStmt) stmt() {}
 func (CreateEdgeStmt) stmt() {}
 func (UpdateNodeStmt) stmt() {}
@@ -125,3 +139,7 @@ func (HelpStmt) stmt()       {}
 func (ExitStmt) stmt()       {}
 func (SaveStmt) stmt()       {}
 func (LoadStmt) stmt()       {}
+func (BeginStmt) stmt()      {}
+func (CommitStmt) stmt()     {}
+func (RollbackStmt) stmt()   {}
+func (VacuumStmt) stmt()     {}

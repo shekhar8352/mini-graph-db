@@ -1,6 +1,7 @@
 package query
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -47,6 +48,9 @@ func (e *Executor) ExecString(line string) (Result, error) {
 func (e *Executor) Exec(stmt Stmt) (Result, error) {
 	switch s := stmt.(type) {
 	case CreateNodeStmt:
+		if e.G.InReadOnlyTxn() {
+			return Result{}, gerr.New(gerr.InvalidArgument, "read-only transaction")
+		}
 		n := e.G.AddNode(s.Label, s.Props)
 		return Result{
 			Kind:     "message",
@@ -179,6 +183,31 @@ func (e *Executor) Exec(stmt Stmt) (Result, error) {
 		return Result{Kind: "exit", Message: "bye", Exit: true}, nil
 	case SaveStmt, LoadStmt:
 		return Result{}, gerr.New(gerr.InvalidArgument, "use `graphdb backup`")
+	case BeginStmt:
+		if err := e.G.Begin(s.ReadOnly); err != nil {
+			return Result{}, err
+		}
+		msg := "begin"
+		if s.ReadOnly {
+			msg = "begin read only"
+		}
+		return Result{Kind: "message", Message: msg}, nil
+	case CommitStmt:
+		if err := e.G.Commit(); err != nil {
+			return Result{}, err
+		}
+		return Result{Kind: "message", Message: "commit"}, nil
+	case RollbackStmt:
+		if err := e.G.Rollback(); err != nil {
+			return Result{}, err
+		}
+		return Result{Kind: "message", Message: "rollback"}, nil
+	case VacuumStmt:
+		n, err := e.G.Vacuum(context.Background())
+		if err != nil {
+			return Result{}, err
+		}
+		return Result{Kind: "message", Message: fmt.Sprintf("vacuum reclaimed %d", n), Mutating: true}, nil
 	default:
 		return Result{}, gerr.New(gerr.Internal, "unhandled statement")
 	}
@@ -216,6 +245,10 @@ const helpText = `Commands:
   DELETE NODE <id>
   DELETE EDGE <id>
   SHOW STATS
+  VACUUM
+  BEGIN [READ ONLY]
+  COMMIT
+  ROLLBACK
   HELP
   EXIT
 

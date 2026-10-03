@@ -60,6 +60,14 @@ func Parse(src string) (Stmt, error) {
 		stmt, err = p.parseSave()
 	case "LOAD":
 		stmt, err = p.parseLoad()
+	case "BEGIN":
+		stmt, err = p.parseBegin()
+	case "COMMIT":
+		stmt = CommitStmt{}
+	case "ROLLBACK":
+		stmt = RollbackStmt{}
+	case "VACUUM":
+		stmt = VacuumStmt{}
 	default:
 		return nil, gerr.Newf(gerr.Syntax, "unknown command %q", kw)
 	}
@@ -289,6 +297,17 @@ func (p *Parser) parseLoad() (Stmt, error) {
 		return nil, err
 	}
 	return LoadStmt{Path: path}, nil
+}
+
+func (p *Parser) parseBegin() (Stmt, error) {
+	if !p.isKeyword("READ") {
+		return BeginStmt{}, nil
+	}
+	p.advance()
+	if _, err := p.expectKeyword("ONLY"); err != nil {
+		return nil, err
+	}
+	return BeginStmt{ReadOnly: true}, nil
 }
 
 func (p *Parser) expectPath() (string, error) {

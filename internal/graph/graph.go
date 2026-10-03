@@ -1,11 +1,13 @@
 // Package graph is the property-graph facade over the storage engine.
-// Each method auto-commits one transaction on the in-memory engine.
+// Without Begin, each method auto-commits one transaction.
 // Records, indexes, cascade delete, and traversals live in graphstore.
 package graph
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"sync"
 
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/storage"
@@ -16,8 +18,14 @@ import (
 
 // Graph is a property graph stored in a storage.Engine.
 // Node and edge IDs start at 1 and are never reused.
+// Without Begin, each method auto-commits. Begin holds one transaction
+// across methods until Commit or Rollback. That transaction is not safe
+// for concurrent use.
 type Graph struct {
-	eng storage.Engine
+	eng    storage.Engine
+	mu     sync.Mutex
+	held   storage.Tx
+	heldRO bool
 }
 
 // New returns an empty graph backed by the in-memory engine.
@@ -28,6 +36,85 @@ func New() *Graph {
 // NewWith binds a graph to eng. The caller closes eng.
 func NewWith(eng storage.Engine) *Graph {
 	return &Graph{eng: eng}
+}
+
+// Begin starts an explicit transaction. Later calls use it until Commit or Rollback.
+// A second Begin fails. readOnly rejects later writes.
+func (g *Graph) Begin(readOnly bool) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.held != nil {
+		return gerr.New(gerr.InvalidArgument, "transaction already open")
+	}
+	tx, err := g.eng.Begin(storage.TxOptions{ReadOnly: readOnly})
+	if err != nil {
+		return err
+	}
+	g.held = tx
+	g.heldRO = readOnly
+	return nil
+}
+
+// Commit publishes the explicit transaction.
+// A conflict or a failed pre-commit hook leaves the transaction open.
+func (g *Graph) Commit() error {
+	g.mu.Lock()
+	tx := g.held
+	ro := g.heldRO
+	g.held = nil
+	g.heldRO = false
+	g.mu.Unlock()
+	if tx == nil {
+		return gerr.New(gerr.InvalidArgument, "no transaction")
+	}
+	err := tx.Commit()
+	if err != nil && txOpen(tx) {
+		g.mu.Lock()
+		if g.held == nil {
+			g.held = tx
+			g.heldRO = ro
+		}
+		g.mu.Unlock()
+	}
+	return err
+}
+
+// Rollback drops the explicit transaction.
+func (g *Graph) Rollback() error {
+	g.mu.Lock()
+	tx := g.held
+	g.held = nil
+	g.heldRO = false
+	g.mu.Unlock()
+	if tx == nil {
+		return gerr.New(gerr.InvalidArgument, "no transaction")
+	}
+	return tx.Rollback()
+}
+
+// InReadOnlyTxn reports whether an explicit read-only transaction is open.
+func (g *Graph) InReadOnlyTxn() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.held != nil && g.heldRO
+}
+
+// Vacuum asks the engine to drop versions no open snapshot can read.
+// Engines without a transaction manager return InvalidArgument.
+func (g *Graph) Vacuum(ctx context.Context) (uint64, error) {
+	type vacuumer interface {
+		Vacuum(context.Context) (uint64, error)
+	}
+	v, ok := g.eng.(vacuumer)
+	if !ok {
+		return 0, gerr.New(gerr.InvalidArgument, "VACUUM is not supported by this engine")
+	}
+	return v.Vacuum(ctx)
+}
+
+func txOpen(tx storage.Tx) bool {
+	_, err := tx.Get(storage.KSCatalog, []byte{0xff})
+	return !errors.Is(err, storage.ErrDone)
 }
 
 // InternPropKey returns the stable id for a property name, assigning one if needed.
@@ -359,6 +446,12 @@ func (g *Graph) readNode(id uint64) (Node, bool) {
 }
 
 func (g *Graph) read(fn func(storage.Tx) error) error {
+	g.mu.Lock()
+	held := g.held
+	g.mu.Unlock()
+	if held != nil {
+		return fn(held)
+	}
 	tx, err := g.eng.Begin(storage.TxOptions{ReadOnly: true})
 	if err != nil {
 		return err
@@ -369,6 +462,16 @@ func (g *Graph) read(fn func(storage.Tx) error) error {
 }
 
 func (g *Graph) write(fn func(storage.Tx) error) error {
+	g.mu.Lock()
+	held := g.held
+	heldRO := g.heldRO
+	g.mu.Unlock()
+	if held != nil {
+		if heldRO {
+			return storage.ErrReadOnly
+		}
+		return fn(held)
+	}
 	tx, err := g.eng.Begin(storage.TxOptions{})
 	if err != nil {
 		return err
@@ -378,6 +481,7 @@ func (g *Graph) write(fn func(storage.Tx) error) error {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
 		return err
 	}
 	return nil
@@ -387,13 +491,23 @@ func mapErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	var ge *graphstore.Error
+	var ge *gerr.Error
 	if errors.As(err, &ge) {
+		return err
+	}
+	if errors.Is(err, storage.ErrReadOnly) {
+		return gerr.New(gerr.InvalidArgument, "read-only transaction")
+	}
+	if errors.Is(err, storage.ErrDone) {
+		return gerr.New(gerr.InvalidArgument, "transaction finished")
+	}
+	var se *graphstore.Error
+	if errors.As(err, &se) {
 		switch {
-		case ge.NotFound():
-			return gerr.New(gerr.NotFound, ge.Error())
-		case ge.Invalid():
-			return gerr.New(gerr.InvalidArgument, ge.Error())
+		case se.NotFound():
+			return gerr.New(gerr.NotFound, se.Error())
+		case se.Invalid():
+			return gerr.New(gerr.InvalidArgument, se.Error())
 		}
 	}
 	return gerr.Wrap(gerr.Internal, "storage", err)
