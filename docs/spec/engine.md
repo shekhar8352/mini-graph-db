@@ -16,7 +16,7 @@ A read-only transaction and a transaction with no writes commit without logging.
 
 ## Snapshots
 
-A transaction reads the committed state from its `Begin`, plus its own writes. The tree itself holds the latest commit. Older values live in an in-memory undo log until the oldest open transaction no longer needs them. Two writers of the same key both succeed; the last commit wins. Conflict detection is Phase 3.
+A transaction reads the committed state from its `Begin`, plus its own writes. The tree itself holds the latest commit. Older values live in an in-memory undo log until the oldest open transaction no longer needs them. Two writers of the same key both succeed; the last commit wins. First-committer-wins is the transaction manager above this engine ([spec/transactions.md](transactions.md)).
 
 ## Recovery
 

@@ -16,6 +16,12 @@ Copied from the roadmap so they are not "fixed" opportunistically:
 - Encryption at rest (rely on filesystem/volume encryption; document in Phase 8).
 - Graph algorithms library (PageRank, community detection) — traversal and shortest paths only.
 
+## Discovered during Phase 3
+
+- `SELECT … FOR UPDATE` (or any lock held across statements) is not implemented. Write skew commits on both sides under snapshot isolation.
+- A commit still takes the underlying engine lock for that one storage transaction. Readers of other keys do not take row locks, and they do wait out that commit.
+- Prometheus does not scrape `versions_reclaimed_total` or `oldest_snapshot_age_seconds` yet. Those values are `txn.MVCCStats`.
+
 ## Discovered during Phase 2E
 
 - A crash while the heap header is being published can leave the file shorter than the header's page count. Open fails before WAL replay, even when the log has the commit. Repairing page 0 from the latest committed header image is not implemented.
