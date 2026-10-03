@@ -34,6 +34,12 @@ func TestParseTable(t *testing.T) {
 		{in: `EXIT`, kind: "ExitStmt"},
 		{in: `SAVE graph.db`, kind: "SaveStmt"},
 		{in: `LOAD "my graph.db"`, kind: "LoadStmt"},
+		{in: `BEGIN`, kind: "BeginStmt"},
+		{in: `BEGIN READ ONLY`, kind: "BeginStmt"},
+		{in: `begin read only`, kind: "BeginStmt"},
+		{in: `COMMIT`, kind: "CommitStmt"},
+		{in: `ROLLBACK`, kind: "RollbackStmt"},
+		{in: `VACUUM`, kind: "VacuumStmt"},
 		{in: `create node person`, kind: "CreateNodeStmt"},
 		{in: ``, fail: true},
 		{in: `FLORB`, fail: true},
@@ -96,6 +102,14 @@ func typeName(s Stmt) string {
 		return "SaveStmt"
 	case LoadStmt:
 		return "LoadStmt"
+	case BeginStmt:
+		return "BeginStmt"
+	case CommitStmt:
+		return "CommitStmt"
+	case RollbackStmt:
+		return "RollbackStmt"
+	case VacuumStmt:
+		return "VacuumStmt"
 	default:
 		return "unknown"
 	}
@@ -231,9 +245,51 @@ func TestHelpAndExit(t *testing.T) {
 	if err != nil || h.Kind != "help" {
 		t.Fatalf("help: %+v %v", h, err)
 	}
+	if !strings.Contains(h.Message, "BEGIN") || !strings.Contains(h.Message, "VACUUM") {
+		t.Fatalf("help missing transactions: %s", h.Message)
+	}
 	x, err := e.ExecString("QUIT")
 	if err != nil || !x.Exit {
 		t.Fatalf("quit: %+v %v", x, err)
+	}
+}
+
+func TestExplicitTransaction(t *testing.T) {
+	e := NewExecutor(graph.New())
+	mustExec(t, e, `BEGIN`)
+	mustExec(t, e, `CREATE NODE person {name: "Ada"}`)
+	mustExec(t, e, `ROLLBACK`)
+	if _, err := e.ExecString(`GET NODE 1`); !gerr.IsCode(err, gerr.NotFound) {
+		t.Fatalf("rollback leaked the node: %v", err)
+	}
+
+	mustExec(t, e, `BEGIN`)
+	mustExec(t, e, `CREATE NODE person {name: "Ada"}`)
+	res, err := e.ExecString(`GET NODE 1`)
+	if err != nil || len(res.Nodes) != 1 {
+		t.Fatalf("read own write: %+v %v", res, err)
+	}
+	mustExec(t, e, `COMMIT`)
+	res, err = e.ExecString(`GET NODE 1`)
+	if err != nil || len(res.Nodes) != 1 || !nodeProp(res.Nodes[0], "name", "Ada") {
+		t.Fatalf("committed: %+v %v", res, err)
+	}
+
+	mustExec(t, e, `BEGIN READ ONLY`)
+	if _, err := e.ExecString(`CREATE NODE person {name: "Bea"}`); !gerr.IsCode(err, gerr.InvalidArgument) {
+		t.Fatalf("read-only write: %v", err)
+	}
+	res, err = e.ExecString(`GET NODE 1`)
+	if err != nil || len(res.Nodes) != 1 {
+		t.Fatalf("read-only read: %+v %v", res, err)
+	}
+	mustExec(t, e, `ROLLBACK`)
+
+	if _, err := e.ExecString(`COMMIT`); !gerr.IsCode(err, gerr.InvalidArgument) {
+		t.Fatalf("commit without begin: %v", err)
+	}
+	if _, err := e.ExecString(`BEGIN READ`); err == nil {
+		t.Fatal("BEGIN READ should fail")
 	}
 }
 

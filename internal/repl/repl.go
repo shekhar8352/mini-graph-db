@@ -16,6 +16,8 @@ import (
 
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
 	"github.com/shekhar8352/mini-graph-db/internal/query"
+	"github.com/shekhar8352/mini-graph-db/internal/storage/memory"
+	"github.com/shekhar8352/mini-graph-db/internal/txn"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
@@ -35,7 +37,14 @@ func Run(cfg Config) error {
 		cfg.Out = os.Stdout
 	}
 
-	exec := query.NewExecutor(graph.New())
+	eng := memory.Open()
+	mgr, err := txn.Open(eng, txn.Options{})
+	if err != nil {
+		_ = eng.Close()
+		return err
+	}
+	defer func() { _ = mgr.Close() }()
+	exec := query.NewExecutor(graph.NewWith(mgr))
 
 	fmt.Fprintln(cfg.Out, "mini-graph-db  type HELP for commands")
 	if isTerminal(cfg.In) {
@@ -159,6 +168,11 @@ func commandCompleter(line string) []string {
 		"DELETE NODE ",
 		"DELETE EDGE ",
 		"SHOW STATS",
+		"VACUUM",
+		"BEGIN",
+		"BEGIN READ ONLY",
+		"COMMIT",
+		"ROLLBACK",
 		"HELP",
 		"EXIT",
 	}

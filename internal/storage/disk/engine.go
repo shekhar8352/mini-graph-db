@@ -269,6 +269,29 @@ func (e *Engine) Sync() error {
 	return nil
 }
 
+// LogAbort appends a TxnAbort record and syncs the log.
+// Recovery already drops a transaction that has no TxnCommit. The record
+// names that abort. txn.Manager calls this when a write set is rolled back.
+func (e *Engine) LogAbort(txnID uint64) error {
+	e.commitMu.Lock()
+	defer e.commitMu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return storage.ErrClosed
+	}
+	if e.readOnly {
+		return storage.ErrReadOnly
+	}
+	if e.broken != nil {
+		return e.broken
+	}
+	if _, err := e.wal.Append(wal.TypeTxnAbort, txnID, nil); err != nil {
+		return err
+	}
+	return e.wal.Sync()
+}
+
 // Stats reports committed keys and commit counters.
 func (e *Engine) Stats() storage.Stats {
 	e.mu.Lock()

@@ -9,8 +9,7 @@ import "errors"
 // Callers never encode that choice into keys.
 type Keyspace byte
 
-// Keyspace identifiers match the roadmap names. KSVersion is reserved for
-// Phase 3 and is not written by this phase.
+// Keyspace identifiers match the roadmap names.
 const (
 	// KSNode stores node records keyed by node id.
 	KSNode Keyspace = 'N'
@@ -28,7 +27,8 @@ const (
 	KSProp Keyspace = 'P'
 	// KSCatalog stores names, ids, and counters.
 	KSCatalog Keyspace = 'C'
-	// KSVersion is reserved for MVCC version chains.
+	// KSVersion stores MVCC version chains and the timestamp oracle.
+	// The transaction manager owns it. Callers do not put user keys here.
 	KSVersion Keyspace = 'V'
 )
 
