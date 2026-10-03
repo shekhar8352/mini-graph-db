@@ -214,7 +214,7 @@ func (t *memTx) Cursor(ks storage.Keyspace) (storage.Cursor, error) {
 }
 
 // Commit publishes this transaction's writes onto the latest snapshot.
-// Last writer wins per key. Conflict detection is Phase 3.
+// Last writer wins per key. First-committer-wins lives in internal/txn.
 func (t *memTx) Commit() error {
 	t.eng.mu.Lock()
 	defer t.eng.mu.Unlock()

@@ -1,5 +1,7 @@
 // Package graphstore implements node, edge, adjacency, and label operations
 // on a storage.Tx. IDs and names live in the catalog keyspace.
+// Versioned visibility is the transaction manager's job: a storage.Tx from
+// internal/txn hides versions, so Get, Put, Delete, and cursors here see one snapshot.
 package graphstore
 
 import (
@@ -915,6 +917,9 @@ func scanPrefix(tx storage.Tx, ks storage.Keyspace, prefix []byte) ([][]byte, er
 	defer func() { _ = cur.Close() }()
 	var out [][]byte
 	if !cur.Seek(prefix) {
+		if err := cur.Close(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
 	for {
@@ -926,6 +931,9 @@ func scanPrefix(tx storage.Tx, ks storage.Keyspace, prefix []byte) ([][]byte, er
 		if !cur.Next() {
 			break
 		}
+	}
+	if err := cur.Close(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }
