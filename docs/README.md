@@ -12,12 +12,13 @@ This directory is the documentation root for `graphdb`. The [ROADMAP](../ROADMAP
 | [spec/wal.md](spec/wal.md) | Binary write-ahead log (Phase 2D) |
 | [spec/engine.md](spec/engine.md) | Disk engine commit and recovery (Phase 2E) |
 | [spec/legacy.md](spec/legacy.md) | Legacy gob snapshot import (Phase 2F) |
+| [spec/transactions.md](spec/transactions.md) | Snapshot isolation and versions (Phase 3) |
 | [CHANGELOG.md](CHANGELOG.md) | Per-task history |
 | [BACKLOG.md](BACKLOG.md) | Out-of-scope ideas and follow-ups discovered during work |
 | [dependencies.md](dependencies.md) | Allowed third-party modules and justifications |
 | [adr/](adr/) | Architecture Decision Records |
 
-Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later phases. The value spec landed in Phase 1. The page-file spec landed in Phase 2B. The B+tree layout landed in Phase 2C. The binary WAL spec landed in Phase 2D. The disk engine spec landed in Phase 2E. The legacy import spec landed in Phase 2F.
+Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later phases. The value spec landed in Phase 1. The page-file spec landed in Phase 2B. The B+tree layout landed in Phase 2C. The binary WAL spec landed in Phase 2D. The disk engine spec landed in Phase 2E. The legacy import spec landed in Phase 2F. The transaction spec landed in Phase 3.
 
 ## ADR index
 
@@ -32,3 +33,4 @@ Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later ph
 | [0006](adr/0006-wal.md) | Binary write-ahead log | Accepted |
 | [0007](adr/0007-disk-engine.md) | Disk engine, page-image redo, and recovery | Accepted |
 | [0008](adr/0008-legacy-import.md) | Legacy gob import | Accepted |
+| [0009](adr/0009-mvcc.md) | MVCC version placement and snapshot isolation | Accepted |

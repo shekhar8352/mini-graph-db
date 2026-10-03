@@ -4,6 +4,33 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 3 — Transactions and MVCC (2026-10-03)
+
+- **3.1–3.3** `internal/txn` assigns a snapshot at begin and a commit timestamp at commit. Writes stay private until commit. First-committer-wins returns retryable `Conflict` and leaves the transaction open. The versions and the oracle are one underlying storage commit. On disk that commit is still page images, `wal.Sync`, then publish. `TxnCommit` stays an empty payload.
+- **3.4** A crash before the inner `TxnCommit` leaves none of the write set visible. A crash after it leaves all of it. `Rollback` of a transaction that wrote appends `TxnAbort` on the disk engine. Recovery already ignores a transaction that never committed.
+- **3.5** A lost update is `Conflict`. Write skew commits on both sides. `InsertUnique` that loses the key is `ConstraintViolation` and is not retryable.
+- **3.6** `VACUUM` and `Manager.Vacuum` drop versions no open snapshot can read. `MVCCStats` exposes `versions_reclaimed_total` and `oldest_snapshot_age_seconds`. Background collection runs only when `GCInterval` is set. The shell leaves it off.
+- **3.7** `BEGIN`, `BEGIN READ ONLY`, `COMMIT`, `ROLLBACK`, and `VACUUM` parse in the legacy grammar. Without `BEGIN`, each statement auto-commits. The shell opens the memory engine through the manager.
+- **3.8** Concurrent writers and readers keep edge endpoints, a monotonic counter, and a stable snapshot across statements in one transaction.
+- **3.9** No transaction holds a row lock across statements, so two transactions cannot deadlock waiting for each other's keys.
+
+Page and WAL format versions stay 1. The MVCC stamp is format byte 1 on the oracle record in keyspace `V`. A newer byte is refused. Raw values from before this phase are wrapped as heads on open. `graph.New` stays on the raw memory engine.
+
+#### Policy compliance
+
+| Policy | This phase |
+|--------|------------|
+| P1 Durability | A manager commit is one storage commit. On disk, `Commit` still returns only after `wal.Sync` and the heap publish. The memory engine has no fsync. There is no relaxed sync mode. |
+| P2 Atomicity & isolation | Snapshot isolation. A conflict aborts neither transaction until the caller rolls the loser back; the error is retryable `Conflict`. The write set is applied all at once or not at all. Write skew is allowed. |
+| P3 Consistency | `InsertUnique` is checked at commit. A phantom or an existing live key is `ConstraintViolation`. Declared schema constraints are Phase 5. Cascade delete stays in graphstore. |
+| P4 Data integrity | Page and WAL checksums are unchanged. A truncated version-chain record is `Corruption`. |
+| P5 Recoverability | Open recovers the oracle as the last committed timestamp. A transaction without `TxnCommit` is not installed. A crash during the inner commit does not publish a prefix of the write set. |
+| P9 Resource governance | `MaxOpenTxns` (default 1024), `MaxWriteSet` (default 100000), and `IdleTimeout` (default off) return `ResourceExhausted` instead of growing without a bound. |
+| P10 Change management | Page and WAL versions stay 1. The oracle format byte is 1. A newer byte is `InvalidArgument` before the data is used. Pre-manager values are migrated in place on open. |
+| P12 Testing | Conformance on the manager, lost update, write skew, unique phantom, vacuum, limits, migration, abort record, concurrent graph, disk reopen, a crash cut after `wal.Sync`, reader latency under a bulk writer, and 10000 snapshot-isolation histories run under `go test -race`. |
+| P13 Documentation | [ADR 0009](adr/0009-mvcc.md) and [spec/transactions.md](spec/transactions.md). |
+| P6–P8, P11 | Authentication, audit, Prometheus, and replicas are later phases. The version counters are in-process until Phase 8. |
+
 ### Phase 2F — Migration from legacy formats (2026-10-02)
 
 - **2F.1** `internal/compat/gobimport` reads a gob snapshot (version 0 or 1) and an optional text WAL of query lines, replays those lines, and writes the result with one commit into a new disk database directory.

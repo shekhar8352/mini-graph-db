@@ -48,7 +48,7 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
                                       ▼
                     ┌─────────────────────────────────────┐
                     │  internal/graph → graphstore        │
-                    │  shell: storage/memory              │
+                    │  shell: txn on storage/memory       │
                     │  migrate: storage/disk.OpenEngine   │
                     └─────────────────────────────────────┘
 ```
@@ -57,10 +57,10 @@ Request path for a typical command:
 
 1. The REPL reads a line (`graph> MATCH person WHERE age > 25`).
 2. `query.Parse` lexes tokens and builds an AST (`MatchStmt`).
-3. `query.Executor` calls the graph facade, which runs the statement as one transaction on the in-memory storage engine (`NodesByLabel` + `WHERE` compare).
+3. `query.Executor` calls the graph facade. Without `BEGIN`, the statement is one transaction on the memory engine through the transaction manager (`NodesByLabel` + `WHERE` compare).
 4. The REPL prints a text table (nodes, edges, neighbors, path, or stats).
 
-Packages depend inward only: `cmd` → `repl` → `query` → `graph` → `graphstore` → `storage`. `graphdb migrate` also calls `internal/compat/gobimport`, which writes `storage/disk`. There are no third-party dependencies in the engine or parser. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
+Packages depend inward only: `cmd` → `repl` → `query` → `graph` → (`graphstore`, `txn`) → `storage`. `txn` does not import `graphstore`. `graphdb migrate` also calls `internal/compat/gobimport`, which writes `storage/disk`. There are no third-party dependencies in the engine, the transaction manager, or the parser. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
 
 ### Package map
 
@@ -75,6 +75,7 @@ Packages depend inward only: `cmd` → `repl` → `query` → `graph` → `graph
 | [`internal/storage/disk`](internal/storage/disk) | Page file, buffer pool, B+tree, and `OpenEngine` (not used by the shell yet) |
 | [`internal/wal`](internal/wal) | Binary write-ahead log used by the disk engine |
 | [`internal/storage/graphstore`](internal/storage/graphstore) | Nodes, edges, adjacency, indexes, catalog ids |
+| [`internal/txn`](internal/txn) | Snapshot isolation, versions, and commit timestamps |
 | [`internal/graph`](internal/graph) | Facade used by the query executor and the shell |
 | [`internal/compat/gobimport`](internal/compat/gobimport) | Legacy gob snapshot and text WAL import into a disk database |
 
@@ -98,9 +99,9 @@ Edge { ID uint64, From uint64, To uint64, Label string, Props map[propKeyID]valu
 
 ### Storage layout
 
-Each `Graph` method auto-commits one transaction on the in-memory engine. A transaction sees the committed snapshot from its start, plus its own writes. Other transactions do not see those writes until commit.
+Without `BEGIN`, each `Graph` method auto-commits one transaction. The shell runs those transactions on the memory engine through `internal/txn`: a reader sees the committed snapshot from its start, plus its own writes, and a second writer of the same key gets a retryable conflict. `graph.New` in tests still uses the raw memory engine, where the last writer of a key wins.
 
-Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk engine (`OpenEngine`) keeps one B+tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)) on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). A commit logs those pages to the binary WAL and syncs before it acknowledges ([ADR 0006](docs/adr/0006-wal.md), [ADR 0007](docs/adr/0007-disk-engine.md), [engine spec](docs/spec/engine.md)). The shell still runs on the memory engine. `graphdb migrate` is what writes a disk directory from an old gob snapshot.
+Keys are split by keyspace. The memory engine keeps a sorted key slice and a value map for each one. The disk engine (`OpenEngine`) keeps one B+tree per keyspace ([ADR 0005](docs/adr/0005-btree.md)) on the page file from [ADR 0004](docs/adr/0004-page-file.md): 8 KiB pages by default, a CRC32C trailer, and a freelist ([page spec](docs/spec/pages.md)). A commit logs those pages to the binary WAL and syncs before it acknowledges ([ADR 0006](docs/adr/0006-wal.md), [ADR 0007](docs/adr/0007-disk-engine.md), [engine spec](docs/spec/engine.md)). The shell runs on the memory engine through the transaction manager ([ADR 0009](docs/adr/0009-mvcc.md), [transaction spec](docs/spec/transactions.md)). `graphdb migrate` is what writes a disk directory from an old gob snapshot.
 
 ```
 N  node id            → labels and properties
@@ -141,7 +142,7 @@ Lexer tokens include identifiers, integers/floats, quoted strings (`\"`, `\\`, `
 
 The parser produces typed statements (`CreateNodeStmt`, `MatchEdgeStmt`, `GetNodeStmt`, …). Unknown commands fail at parse time. The executor never re-parses: it switches on the AST.
 
-Each statement auto-commits one transaction on the in-memory engine. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. That command is Phase 8. Until then, `graphdb migrate` is how an old snapshot becomes a disk database.
+Each statement auto-commits one transaction unless the session has run `BEGIN`. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. That command is Phase 8. Until then, `graphdb migrate` is how an old snapshot becomes a disk database.
 
 ---
 
@@ -205,6 +206,18 @@ DELETE EDGE <id>
 ```
 
 `UPDATE` merges properties (existing keys overwritten, new keys added). `DELETE NODE` removes incident edges.
+
+#### Transactions
+
+```
+BEGIN
+BEGIN READ ONLY
+COMMIT
+ROLLBACK
+VACUUM
+```
+
+`BEGIN` holds later statements in one transaction until `COMMIT` or `ROLLBACK`. `BEGIN READ ONLY` rejects writes. Without `BEGIN`, each statement commits on its own. `VACUUM` drops old versions no open snapshot can still read.
 
 #### Persistence and session
 
@@ -292,7 +305,9 @@ make lint          # golangci-lint
 | `internal/storage/memory` | Engine conformance: order, cursors, isolation, crash hooks |
 | `internal/storage/graphstore` | Cascade delete, id allocation, property index |
 | `internal/graph` | CRUD, cascade delete, indexes, export/import, BFS/DFS, shortest path |
-| `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, SAVE/LOAD rejection |
+| `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, `BEGIN`/`COMMIT`, SAVE/LOAD rejection |
+| `internal/txn` | Snapshot isolation, conflicts, vacuum, concurrent readers, disk reopen |
+| `test/consistency` | 10000 randomized snapshot-isolation histories |
 | `internal/compat/gobimport` | Gob version 0 and 1, text WAL replay, into a disk directory |
 | `internal/repl` | End-to-end session over a fake stdin |
 
