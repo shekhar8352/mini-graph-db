@@ -4,6 +4,21 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.1 — GQL-lite grammar (2026-10-07)
+
+- **4.1** [spec/query-language.md](spec/query-language.md) is grammar version 1: lexical rules, statement grammar, expression precedence, scope, patterns, mutation, functions, procedures, DDL, DCL, errors, the legacy rewrite table, and 60 examples. [ADR 0010](adr/0010-gql-lite.md) accepts it. The shell still runs the legacy line language. No runtime change.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P2 Atomicity & isolation | The spec keeps snapshot isolation, statement-level rollback inside an open transaction, and first-committer-wins. `MERGE` does not take a row lock. |
+| P3 Consistency | `DELETE` of a node that still has edges is `ConstraintViolation`. `DETACH DELETE` removes those edges. Unique, existence, and type constraints are in the grammar; enforcement is Phase 5. |
+| P9 Resource governance | Variable-length walks stop at `max_pattern_hops` (default 128) with `ResourceExhausted`. |
+| P10 Change management | Query grammar version is 1. A later incompatible change bumps that version. Page, WAL, and MVCC formats are unchanged. |
+| P13 Documentation | The spec and ADR 0010. |
+| P1, P4–P8, P11, P12 | No code change. Durability, checksums, recovery, auth, and tests are unchanged. |
+
 ### Phase 3 — Transactions and MVCC (2026-10-03)
 
 - **3.1–3.3** `internal/txn` assigns a snapshot at begin and a commit timestamp at commit. Writes stay private until commit. First-committer-wins returns retryable `Conflict` and leaves the transaction open. The versions and the oracle are one underlying storage commit. On disk that commit is still page images, `wal.Sync`, then publish. `TxnCommit` stays an empty payload.

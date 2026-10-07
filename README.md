@@ -148,6 +148,8 @@ Each statement auto-commits one transaction unless the session has run `BEGIN`. 
 
 ## Query language
 
+The shell still speaks the line language below. The next language, GQL-lite grammar version 1, is specified in [`docs/spec/query-language.md`](docs/spec/query-language.md) and is not executed yet.
+
 ### Values and properties
 
 Property maps are `{key: value, key: value}`. Keys are identifiers. Values:
