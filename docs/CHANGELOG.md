@@ -4,6 +4,21 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.3 — GQL-lite AST and printer (2026-10-07)
+
+- **4.3** `internal/lang/ast` is the typed tree for grammar version 1. Nodes do not store positions. `Walk` and `Rewrite` visit that tree. `ast.Format` prints it, and `Parse(Format(Parse(x)))` matches `Parse(x)`.
+- `internal/lang/parser` is the recursive-descent parser the round-trip uses. It stops at the first syntax error. The message is `expected … at line:col`. Error recovery and `docs/spec/examples` stay in task 4.4.
+- Keyword tokens keep the spelling from the source. `!=` is stored as `<>`. `UNION DISTINCT` is stored as `UNION`. A variable-length `*` and `*1..` are the same open range. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. `CALL` may end with `WHERE`, which example E43 already used. `REQUIRE`, `ALTER`, and `ONLY` stay unreserved and are matched case-insensitively. |
+| P12 Testing | Round-trip corpus, visitor tests, syntax errors, and `FuzzParse` run under `go test -race`. |
+| P13 Documentation | Spec note for `CALL` … `WHERE` and for the three unreserved grammar words. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.2 — GQL-lite lexer (2026-10-07)
 
 - **4.2** `internal/lang/lexer` tokenizes grammar version 1: identifiers, backtick names, Go string escapes, decimal and hex integers, float exponents, `$name` parameters, operators, and `--` / `/* */` comments. Syntax errors are `Syntax` and include `at line:col`. `date`, `datetime`, and `duration` are identifiers in front of a call. A reserved word stays a keyword after `.` and `:`.

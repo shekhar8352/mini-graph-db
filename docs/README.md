@@ -19,7 +19,7 @@ This directory is the documentation root for `graphdb`. The [ROADMAP](../ROADMAP
 | [dependencies.md](dependencies.md) | Allowed third-party modules and justifications |
 | [adr/](adr/) | Architecture Decision Records |
 
-Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later phases. The value spec landed in Phase 1. The page-file spec landed in Phase 2B. The B+tree layout landed in Phase 2C. The binary WAL spec landed in Phase 2D. The disk engine spec landed in Phase 2E. The legacy import spec landed in Phase 2F. The transaction spec landed in Phase 3. The GQL-lite grammar landed in Phase 4.1. The shell still runs the legacy line language.
+Operations guides (`docs/ops/`) and SDK docs (`docs/sdk/`) are added in later phases. The value spec landed in Phase 1. The page-file spec landed in Phase 2B. The B+tree layout landed in Phase 2C. The binary WAL spec landed in Phase 2D. The disk engine spec landed in Phase 2E. The legacy import spec landed in Phase 2F. The transaction spec landed in Phase 3. The GQL-lite grammar landed in Phase 4.1. The lexer landed in Phase 4.2. The AST, printer, and parser landed in Phase 4.3. The shell still runs the legacy line language.
 
 ## ADR index
 
