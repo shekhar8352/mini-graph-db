@@ -81,7 +81,7 @@ The lexer prefers the longest operator:
 
 Then single-character tokens: `( ) [ ] { } , : . ; + - * / % ^ = < > | $`
 
-`-->` is the two tokens `-` and `->`. `<--` is `<-` and `-`. `--` is `-` and `-`.
+`-->` is the two tokens `-` and `->`. `<--` is `<-` and `-`. A pair of dashes starts a `--` comment, except when those dashes are the prefix of `-->`: that prefix is minus and then `->`. The undirected shorthand is written `-[]-`, or as two minuses with whitespace between them (`- -`). Adjacent `--` is a comment.
 
 ## Reserved words
 
@@ -316,7 +316,7 @@ Direction:
 |---------|---------|
 | `-[]->` or `-->` | stored `from → to` |
 | `<-[]-` or `<--` | stored `to → from` |
-| `-[]-` or `--` | either stored direction |
+| `-[]-` or `- -` | either stored direction. Adjacent `--` is a comment |
 
 `startNode` and `endNode` follow the stored edge. A path's `nodes` list follows walk order.
 

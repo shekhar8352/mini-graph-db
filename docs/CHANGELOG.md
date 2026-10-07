@@ -4,6 +4,21 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.2 — GQL-lite lexer (2026-10-07)
+
+- **4.2** `internal/lang/lexer` tokenizes grammar version 1: identifiers, backtick names, Go string escapes, decimal and hex integers, float exponents, `$name` parameters, operators, and `--` / `/* */` comments. Syntax errors are `Syntax` and include `at line:col`. `date`, `datetime`, and `duration` are identifiers in front of a call. A reserved word stays a keyword after `.` and `:`.
+
+Adjacent `--` is a line comment. `-->` is still minus and then `->`, and `<--` is `<-` and then minus. The undirected pattern is written `-[]-` or `- -`. [spec/query-language.md](spec/query-language.md) says so. Grammar version stays 1. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. The `--` sentence in the spec matched the comment rule and the `-->` operator rule at the same time; the spec now states which one wins. |
+| P12 Testing | Lexer tests and `FuzzScan` run under `go test -race`. |
+| P13 Documentation | Spec clarification in the lexical and pattern sections. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.1 — GQL-lite grammar (2026-10-07)
 
 - **4.1** [spec/query-language.md](spec/query-language.md) is grammar version 1: lexical rules, statement grammar, expression precedence, scope, patterns, mutation, functions, procedures, DDL, DCL, errors, the legacy rewrite table, and 60 examples. [ADR 0010](adr/0010-gql-lite.md) accepts it. The shell still runs the legacy line language. No runtime change.
