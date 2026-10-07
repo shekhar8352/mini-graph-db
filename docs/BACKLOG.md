@@ -16,6 +16,18 @@ Copied from the roadmap so they are not "fixed" opportunistically:
 - Encryption at rest (rely on filesystem/volume encryption; document in Phase 8).
 - Graph algorithms library (PageRank, community detection) — traversal and shortest paths only.
 
+## Discovered during Phase 4.1
+
+Outside grammar version 1, recorded in [spec/query-language.md](spec/query-language.md):
+
+- Named time zones.
+- `EXISTS` subqueries and `FOREACH`.
+- Dynamic labels, relationship types, and property keys.
+- Zero-hop patterns (`*0..n`).
+- Parameterized list types (`LIST OF INT`).
+- Positional parameters (`$1`).
+- Edge-endpoint label constraints.
+
 ## Discovered during Phase 3
 
 - `SELECT … FOR UPDATE` (or any lock held across statements) is not implemented. Write skew commits on both sides under snapshot isolation.
