@@ -107,6 +107,8 @@ UNIQUE UNWIND USE USER USERS VACUUM WHEN WHERE WITH WRITE XOR YIELD
 
 A variable whose name is reserved is written in backticks: `` (`match`) ``.
 
+`REQUIRE`, `ALTER`, and `ONLY` are written in the grammar and matched case-insensitively. They are not reserved, so a variable may use those spellings without backticks.
+
 ## Types named in the grammar
 
 A type name is an identifier, compared case-insensitively, and only in a type position (`IS ::` and `REQUIRE … IS ::`):
@@ -159,7 +161,7 @@ projItem        = expr [ "AS" name ] ;
 sortItem        = expr [ "ASC" | "DESC" ] [ "NULLS" ( "FIRST" | "LAST" ) ] ;
 
 callClause      = "CALL" procName "(" [ expr { "," expr } ] ")"
-                  [ "YIELD" yieldItem { "," yieldItem } ] ;
+                  [ "YIELD" yieldItem { "," yieldItem } ] [ "WHERE" expr ] ;
 procName        = name { "." name } ;
 yieldItem       = name [ "AS" name ] ;
 
