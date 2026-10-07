@@ -1,6 +1,9 @@
 package lexer
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Kind is a lexical token class. Keywords are their own kinds.
 // A keyword after '.' or ':' stays a keyword; the parser accepts it as a name there.
@@ -174,6 +177,12 @@ func (k Kind) String() string {
 // Keyword reports whether k is a reserved word.
 func (k Kind) Keyword() bool {
 	return k >= KwAdmin && k <= KwYield
+}
+
+// IsKeyword reports whether s is a reserved word, ignoring case.
+func IsKeyword(s string) bool {
+	_, ok := keywords[strings.ToUpper(s)]
+	return ok
 }
 
 var kindName = map[Kind]string{

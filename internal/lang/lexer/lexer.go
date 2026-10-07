@@ -244,7 +244,7 @@ func (l *Lexer) scanDollar(line, col, off int) (Token, error) {
 func (l *Lexer) scanIdentToken(line, col, off int) Token {
 	text := l.rawIdent()
 	if k, ok := keywords[strings.ToUpper(text)]; ok {
-		return Token{Kind: k, Text: k.String(), Line: line, Col: col, Offset: off}
+		return Token{Kind: k, Text: text, Line: line, Col: col, Offset: off}
 	}
 	return Token{Kind: Ident, Text: text, Line: line, Col: col, Offset: off}
 }

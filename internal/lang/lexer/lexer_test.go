@@ -22,7 +22,7 @@ func TestKeywords(t *testing.T) {
 			t.Fatalf("%s: %+v", name, toks[0])
 		}
 		low := mustScan(t, strings.ToLower(name))
-		if low[0].Kind != k {
+		if low[0].Kind != k || low[0].Text != strings.ToLower(name) {
 			t.Fatalf("lower %s: %+v", name, low[0])
 		}
 		quoted := mustScan(t, "`"+name+"`")
@@ -39,16 +39,16 @@ func TestScan(t *testing.T) {
 	}{
 		{"", []item{{EOF, ""}}},
 		{"Match (n:Person)", []item{
-			{KwMatch, "MATCH"}, {LParen, "("}, {Ident, "n"}, {Colon, ":"}, {Ident, "Person"}, {RParen, ")"}, {EOF, ""},
+			{KwMatch, "Match"}, {LParen, "("}, {Ident, "n"}, {Colon, ":"}, {Ident, "Person"}, {RParen, ")"}, {EOF, ""},
 		}},
-		{"n.match", []item{{Ident, "n"}, {Dot, "."}, {KwMatch, "MATCH"}, {EOF, ""}}},
+		{"n.match", []item{{Ident, "n"}, {Dot, "."}, {KwMatch, "match"}, {EOF, ""}}},
 		{"`match`", []item{{Ident, "match"}, {EOF, ""}}},
 		{"`a``b`", []item{{Ident, "a`b"}, {EOF, ""}}},
 		{"````", []item{{Ident, "`"}, {EOF, ""}}},
 		{"$from", []item{{Param, "from"}, {EOF, ""}}},
 		{"$FROM", []item{{Param, "FROM"}, {EOF, ""}}},
 		{"$`match`", []item{{Param, "match"}, {EOF, ""}}},
-		{"$ from", []item{{Dollar, "$"}, {KwFrom, "FROM"}, {EOF, ""}}},
+		{"$ from", []item{{Dollar, "$"}, {KwFrom, "from"}, {EOF, ""}}},
 		{"$1", []item{{Dollar, "$"}, {Int, "1"}, {EOF, ""}}},
 		{`date("2025-01-31")`, []item{
 			{Ident, "date"}, {LParen, "("}, {String, "2025-01-31"}, {RParen, ")"}, {EOF, ""},
@@ -98,7 +98,7 @@ func TestScan(t *testing.T) {
 		{"/**/;", []item{{Semi, ";"}, {EOF, ""}}},
 		{"-- /*\nMATCH", []item{{KwMatch, "MATCH"}, {EOF, ""}}},
 		{"NaN Inf true FALSE null", []item{
-			{KwNan, "NAN"}, {KwInf, "INF"}, {KwTrue, "TRUE"}, {KwFalse, "FALSE"}, {KwNull, "NULL"}, {EOF, ""},
+			{KwNan, "NaN"}, {KwInf, "Inf"}, {KwTrue, "true"}, {KwFalse, "FALSE"}, {KwNull, "null"}, {EOF, ""},
 		}},
 		{"_a1", []item{{Ident, "_a1"}, {EOF, ""}}},
 		{"1a", []item{{Int, "1"}, {Ident, "a"}, {EOF, ""}}},
