@@ -643,7 +643,7 @@ Named time zones, `EXISTS` subqueries, `FOREACH`, dynamic labels, zero-hop patte
 
 ## Examples
 
-Each block is one statement or one script the parser accepts, unless the line says it is rejected.
+Each block is one statement or one script the parser accepts, unless the line says it is rejected. The same scripts are in [examples/](examples/).
 
 ### E1. Match a labeled node
 
