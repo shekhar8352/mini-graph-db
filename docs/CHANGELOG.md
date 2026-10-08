@@ -4,6 +4,21 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.5 — GQL-lite semantic checker (2026-10-08)
+
+- **4.5** `internal/lang/sema` checks a parsed script for scope, clause order, aggregates, pattern shape, and expression kinds. It does not run the query. The shell still runs the legacy line language.
+- `Check` allows any `$name` and types it as any. `CheckParams` requires every referenced name and checks the supplied kind. A missing name is `InvalidArgument`. The wrong number of arguments, an illegal aggregate, an unbound name, and a bad `MERGE` shape are `Semantic`. An unknown function and a concrete kind mismatch are `InvalidArgument`.
+- `bytes(string)` is accepted because example E47 uses it. Grammar version stays 1.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. The checker follows the rules already in the spec. |
+| P12 Testing | Scope, clause, aggregate, pattern, parameter, and the 60-script corpus run under `go test -race`. |
+| P13 Documentation | The architecture note and this changelog describe the checker. The shell still runs the legacy line language. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.4 — GQL-lite parser recovery and examples (2026-10-08)
 
 - **4.4** Expressions in `internal/lang/parser` are a Pratt parser. Statement structure stays recursive descent. A comparison chain such as `a < b < c` is `Syntax`.
