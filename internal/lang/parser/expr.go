@@ -7,62 +7,98 @@ import (
 	"github.com/shekhar8352/mini-graph-db/internal/lang/lexer"
 )
 
-func (p *Parser) expr() ast.Expr { return p.parseOr() }
+// Precedence, tightest last. Comparison does not chain.
+const (
+	precOr  = 1
+	precXor = 2
+	precAnd = 3
+	precCmp = 5
+	precAdd = 6
+	precMul = 7
+	precPow = 9
+)
 
-func (p *Parser) parseOr() ast.Expr {
-	left := p.parseXor()
-	for p.at(lexer.KwOr) {
-		p.advance()
-		right := p.parseXor()
-		left = &ast.Binary{Op: "OR", Left: left, Right: right}
+type led struct {
+	prec  int
+	right bool
+	cmp   bool
+}
+
+func (p *Parser) expr() ast.Expr { return p.pratt(precOr) }
+
+// pratt parses an expression whose operators bind at least floor.
+// Prefix NOT and unary +/- are nud. Binary operators are led.
+func (p *Parser) pratt(floor int) ast.Expr {
+	if p.err != nil {
+		return nil
+	}
+	left := p.prefix()
+	prevCmp := false
+	for p.err == nil {
+		info, ok := p.ledInfo()
+		if !ok || info.prec < floor {
+			break
+		}
+		if prevCmp && info.cmp {
+			p.fail("expected expression")
+			return left
+		}
+		left = p.applyLed(left, info)
+		prevCmp = info.cmp
 	}
 	return left
 }
 
-func (p *Parser) parseXor() ast.Expr {
-	left := p.parseAnd()
-	for p.at(lexer.KwXor) {
+func (p *Parser) prefix() ast.Expr {
+	switch {
+	case p.at(lexer.KwNot):
 		p.advance()
-		right := p.parseAnd()
-		left = &ast.Binary{Op: "XOR", Left: left, Right: right}
-	}
-	return left
-}
-
-func (p *Parser) parseAnd() ast.Expr {
-	left := p.parseNot()
-	for p.at(lexer.KwAnd) {
+		return &ast.Unary{Op: "NOT", X: p.pratt(precCmp)}
+	case p.at(lexer.Plus), p.at(lexer.Minus):
+		op := p.cur().Kind.String()
 		p.advance()
-		right := p.parseNot()
-		left = &ast.Binary{Op: "AND", Left: left, Right: right}
+		return &ast.Unary{Op: op, X: p.pratt(precPow)}
+	default:
+		return p.parsePostfix()
 	}
-	return left
 }
 
-func (p *Parser) parseNot() ast.Expr {
-	if p.at(lexer.KwNot) {
-		p.advance()
-		return &ast.Unary{Op: "NOT", X: p.parseNot()}
+func (p *Parser) ledInfo() (led, bool) {
+	if p.err != nil {
+		return led{}, false
 	}
-	return p.parseComparison()
-}
-
-func (p *Parser) parseComparison() ast.Expr {
-	left := p.parseAdd()
-	if !p.compOp() {
-		return left
-	}
-	return p.compTail(left)
-}
-
-func (p *Parser) compOp() bool {
 	switch p.cur().Kind {
+	case lexer.KwOr:
+		return led{prec: precOr}, true
+	case lexer.KwXor:
+		return led{prec: precXor}, true
+	case lexer.KwAnd:
+		return led{prec: precAnd}, true
 	case lexer.Eq, lexer.NotEq, lexer.Lt, lexer.Gt, lexer.LtEq, lexer.GtEq,
 		lexer.KwIs, lexer.KwIn, lexer.KwStarts, lexer.KwEnds, lexer.KwContains:
-		return p.err == nil
+		return led{prec: precCmp, cmp: true}, true
+	case lexer.Plus, lexer.Minus:
+		return led{prec: precAdd}, true
+	case lexer.Star, lexer.Slash, lexer.Percent:
+		return led{prec: precMul}, true
+	case lexer.Caret:
+		return led{prec: precPow, right: true}, true
 	default:
-		return false
+		return led{}, false
 	}
+}
+
+func (p *Parser) applyLed(left ast.Expr, info led) ast.Expr {
+	if info.cmp {
+		return p.compTail(left)
+	}
+	op := p.cur().Kind.String()
+	p.advance()
+	rhsMin := info.prec + 1
+	if info.right {
+		rhsMin = info.prec
+	}
+	return &ast.Binary{Op: op, Left: left, Right: p.pratt(rhsMin)}
 }
 
 func (p *Parser) compTail(left ast.Expr) ast.Expr {
@@ -73,25 +109,25 @@ func (p *Parser) compTail(left ast.Expr) ast.Expr {
 			op = "<>"
 		}
 		p.advance()
-		return &ast.Binary{Op: op, Left: left, Right: p.parseAdd()}
+		return &ast.Binary{Op: op, Left: left, Right: p.pratt(precAdd)}
 	case lexer.KwIn:
 		p.advance()
-		return &ast.Binary{Op: "IN", Left: left, Right: p.parseAdd()}
+		return &ast.Binary{Op: "IN", Left: left, Right: p.pratt(precAdd)}
 	case lexer.KwStarts:
 		p.advance()
 		if !p.expect(lexer.KwWith) {
 			return left
 		}
-		return &ast.Binary{Op: "STARTS WITH", Left: left, Right: p.parseAdd()}
+		return &ast.Binary{Op: "STARTS WITH", Left: left, Right: p.pratt(precAdd)}
 	case lexer.KwEnds:
 		p.advance()
 		if !p.expect(lexer.KwWith) {
 			return left
 		}
-		return &ast.Binary{Op: "ENDS WITH", Left: left, Right: p.parseAdd()}
+		return &ast.Binary{Op: "ENDS WITH", Left: left, Right: p.pratt(precAdd)}
 	case lexer.KwContains:
 		p.advance()
-		return &ast.Binary{Op: "CONTAINS", Left: left, Right: p.parseAdd()}
+		return &ast.Binary{Op: "CONTAINS", Left: left, Right: p.pratt(precAdd)}
 	case lexer.KwIs:
 		p.advance()
 		not := false
@@ -112,46 +148,6 @@ func (p *Parser) compTail(left ast.Expr) ast.Expr {
 	default:
 		return left
 	}
-}
-
-func (p *Parser) parseAdd() ast.Expr {
-	left := p.parseMul()
-	for p.at(lexer.Plus) || p.at(lexer.Minus) {
-		op := p.cur().Kind.String()
-		p.advance()
-		right := p.parseMul()
-		left = &ast.Binary{Op: op, Left: left, Right: right}
-	}
-	return left
-}
-
-func (p *Parser) parseMul() ast.Expr {
-	left := p.parseUnary()
-	for p.at(lexer.Star) || p.at(lexer.Slash) || p.at(lexer.Percent) {
-		op := p.cur().Kind.String()
-		p.advance()
-		right := p.parseUnary()
-		left = &ast.Binary{Op: op, Left: left, Right: right}
-	}
-	return left
-}
-
-func (p *Parser) parseUnary() ast.Expr {
-	if p.at(lexer.Plus) || p.at(lexer.Minus) {
-		op := p.cur().Kind.String()
-		p.advance()
-		return &ast.Unary{Op: op, X: p.parseUnary()}
-	}
-	return p.parsePow()
-}
-
-func (p *Parser) parsePow() ast.Expr {
-	left := p.parsePostfix()
-	if p.at(lexer.Caret) {
-		p.advance()
-		return &ast.Binary{Op: "^", Left: left, Right: p.parseUnary()}
-	}
-	return left
 }
 
 func (p *Parser) parsePostfix() ast.Expr {

@@ -1,5 +1,7 @@
 // Package parser parses GQL-lite grammar version 1 into an AST.
-// The first syntax error stops the parse. The message is "expected … at line:col".
+// Statements are recursive descent. Expressions are Pratt.
+// A syntax error is reported as "expected … at line:col", then parsing
+// resumes at the next statement. Parse returns every syntax error.
 package parser
 
 import (
@@ -10,35 +12,77 @@ import (
 	"github.com/shekhar8352/mini-graph-db/internal/lang/lexer"
 )
 
-// Parse parses a script.
+// Parse parses a script. A syntax error is gerr.Syntax and includes
+// "expected … at line:col". When several statements are broken, the error
+// text contains one such message per statement, in order.
 func Parse(src string) (*ast.Script, error) {
+	s, errs := parse(src)
+	if len(errs) == 0 {
+		return s, nil
+	}
+	return nil, joinSyntax(errs)
+}
+
+func parse(src string) (*ast.Script, []error) {
 	toks, err := lexer.Scan(src)
 	if err != nil {
-		return nil, err
+		return nil, []error{err}
 	}
 	p := &Parser{toks: toks}
 	s := p.script()
-	if p.err != nil {
-		return nil, p.err
+	if len(p.errs) > 0 {
+		return nil, p.errs
 	}
 	return s, nil
 }
 
 // Parser is a recursive-descent parser over a token slice.
+// err is sticky until the parser resynchronizes. errs keeps every error.
 type Parser struct {
 	toks []lexer.Token
 	i    int
 	err  error
+	errs []error
+}
+
+// joinErr is a list of syntax errors. errors.As finds each one.
+type joinErr struct{ list []error }
+
+func (e *joinErr) Error() string {
+	var b strings.Builder
+	for i, err := range e.list {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString(err.Error())
+	}
+	return b.String()
+}
+
+func (e *joinErr) Unwrap() []error { return e.list }
+
+func joinSyntax(errs []error) error {
+	if len(errs) == 1 {
+		return errs[0]
+	}
+	return &joinErr{list: errs}
 }
 
 func (p *Parser) script() *ast.Script {
 	s := &ast.Script{}
 	p.skipSemis()
-	for p.err == nil && !p.at(lexer.EOF) {
-		s.Stmts = append(s.Stmts, p.statement())
+	for p.cur().Kind != lexer.EOF {
+		start := p.i
+		stmt := p.statement()
 		if p.err != nil {
-			return nil
+			if p.i == start {
+				p.forceAdvance()
+			}
+			p.sync()
+			p.skipSemis()
+			continue
 		}
+		s.Stmts = append(s.Stmts, stmt)
 		if p.at(lexer.Semi) {
 			p.advance()
 			p.skipSemis()
@@ -48,9 +92,39 @@ func (p *Parser) script() *ast.Script {
 			break
 		}
 		p.fail("expected ;")
-		return nil
+		p.sync()
+		p.skipSemis()
 	}
 	return s
+}
+
+// sync resumes at the next statement after a syntax error.
+func (p *Parser) sync() {
+	if p.cur().Kind != lexer.Semi && p.cur().Kind != lexer.EOF && !p.startsStmt() {
+		p.forceAdvance()
+	}
+	for p.cur().Kind != lexer.EOF && p.cur().Kind != lexer.Semi && !p.startsStmt() {
+		p.forceAdvance()
+	}
+	if p.cur().Kind == lexer.Semi {
+		p.forceAdvance()
+	}
+	p.err = nil
+}
+
+func (p *Parser) startsStmt() bool {
+	switch p.cur().Kind {
+	case lexer.KwBegin, lexer.KwCommit, lexer.KwRollback, lexer.KwExplain, lexer.KwProfile,
+		lexer.KwVacuum, lexer.KwAnalyze, lexer.KwUse, lexer.KwTerminate, lexer.KwShow,
+		lexer.KwCreate, lexer.KwDrop, lexer.KwGrant, lexer.KwRevoke, lexer.KwDeny,
+		lexer.KwOptional, lexer.KwMatch, lexer.KwUnwind, lexer.KwWith, lexer.KwReturn,
+		lexer.KwMerge, lexer.KwSet, lexer.KwRemove, lexer.KwDelete, lexer.KwDetach, lexer.KwCall:
+		return true
+	case lexer.Ident:
+		return strings.EqualFold(p.cur().Text, "ALTER")
+	default:
+		return false
+	}
 }
 
 func (p *Parser) skipSemis() {
@@ -821,6 +895,13 @@ func (p *Parser) at(k lexer.Kind) bool {
 func (p *Parser) ok() bool { return p.err == nil }
 
 func (p *Parser) advance() {
+	if p.err != nil {
+		return
+	}
+	p.forceAdvance()
+}
+
+func (p *Parser) forceAdvance() {
 	if p.i < len(p.toks) && p.toks[p.i].Kind != lexer.EOF {
 		p.i++
 	}
@@ -844,7 +925,9 @@ func (p *Parser) fail(msg string) {
 	if line == 0 {
 		line, col = 1, 1
 	}
-	p.err = gerr.Newf(gerr.Syntax, "%s at %d:%d", msg, line, col)
+	err := gerr.Newf(gerr.Syntax, "%s at %d:%d", msg, line, col)
+	p.err = err
+	p.errs = append(p.errs, err)
 }
 
 func (p *Parser) variable() string {
@@ -858,6 +941,9 @@ func (p *Parser) variable() string {
 }
 
 func (p *Parser) name() string {
+	if p.err != nil {
+		return ""
+	}
 	if p.cur().Kind != lexer.Ident && !p.cur().Kind.Keyword() {
 		p.fail("expected name")
 		return ""
