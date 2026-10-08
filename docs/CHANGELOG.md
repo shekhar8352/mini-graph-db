@@ -4,10 +4,25 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.4 — GQL-lite parser recovery and examples (2026-10-08)
+
+- **4.4** Expressions in `internal/lang/parser` are a Pratt parser. Statement structure stays recursive descent. A comparison chain such as `a < b < c` is `Syntax`.
+- After a syntax error the parser resumes at the next statement. Each diagnostic is `expected … at line:col`. `Parse` returns every diagnostic from that script.
+- [spec/examples/](spec/examples/) holds the 60 spec scripts. The golden test parses each one. `e53-begin-read.gql` is the `Syntax` case. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. The example scripts are the ones already in the spec. |
+| P12 Testing | The example corpus, recovery of a later statement, Pratt precedence, and the existing round-trip run under `go test -race`. |
+| P13 Documentation | The spec points at `docs/spec/examples/`. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.3 — GQL-lite AST and printer (2026-10-07)
 
 - **4.3** `internal/lang/ast` is the typed tree for grammar version 1. Nodes do not store positions. `Walk` and `Rewrite` visit that tree. `ast.Format` prints it, and `Parse(Format(Parse(x)))` matches `Parse(x)`.
-- `internal/lang/parser` is the recursive-descent parser the round-trip uses. It stops at the first syntax error. The message is `expected … at line:col`. Error recovery and `docs/spec/examples` stay in task 4.4.
+- `internal/lang/parser` is the recursive-descent parser the round-trip uses. Task 4.4 adds Pratt expressions, recovery, and the example corpus.
 - Keyword tokens keep the spelling from the source. `!=` is stored as `<>`. `UNION DISTINCT` is stored as `UNION`. A variable-length `*` and `*1..` are the same open range. The shell still runs the legacy line language.
 
 #### Policy compliance
