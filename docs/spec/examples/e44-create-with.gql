@@ -1,0 +1,4 @@
+CREATE (a:Person {name: "Cara"})
+WITH a
+MATCH (b:Person) WHERE id(b) = id(a)
+RETURN b.name;

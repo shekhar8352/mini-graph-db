@@ -1,0 +1,2 @@
+MATCH p = (a:Person)-[:KNOWS*]->(b:Person)
+RETURN relationships(p) AS edges, length(p) AS hops;

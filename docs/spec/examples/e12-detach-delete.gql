@@ -1,0 +1,2 @@
+MATCH (a:Person {name: "Bob"})
+DETACH DELETE a;

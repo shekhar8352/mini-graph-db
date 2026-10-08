@@ -1,0 +1,1 @@
+RETURN bytes("aGVsbG8=") AS raw, keys({b: 1, a: 2}) AS ks;

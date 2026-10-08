@@ -1,0 +1,3 @@
+BEGIN READ ONLY;
+MATCH (a:Person) RETURN a.name;
+COMMIT;

@@ -1,0 +1,1 @@
+MATCH (n) WHERE n.code = 0x2A OR n.score = 1.5e1 RETURN n;

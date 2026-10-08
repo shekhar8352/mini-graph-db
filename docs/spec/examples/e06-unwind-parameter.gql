@@ -1,0 +1,2 @@
+UNWIND $list AS x
+RETURN x ORDER BY x;

@@ -1,0 +1,2 @@
+-- line comment
+MATCH (n:Person) /* block */ RETURN n.name; /* trailing */

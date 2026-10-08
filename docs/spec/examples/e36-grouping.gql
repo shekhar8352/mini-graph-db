@@ -1,0 +1,3 @@
+MATCH (a:Person)
+RETURN labels(a) AS labs, avg(a.age) AS mean, min(a.age) AS youngest
+ORDER BY mean DESC NULLS LAST;

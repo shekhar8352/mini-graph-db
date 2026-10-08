@@ -1,0 +1,1 @@
+RETURN abs(-3) AS a, round(1.5) AS r, sign(-0.0) AS s, sqrt(4) AS q;

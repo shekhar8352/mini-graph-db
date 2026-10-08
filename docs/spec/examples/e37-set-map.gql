@@ -1,0 +1,3 @@
+MATCH (n) WHERE id(n) = 1
+SET n = {name: "Ada"}, n += {city: "Paris"}
+RETURN n.name, n.city;

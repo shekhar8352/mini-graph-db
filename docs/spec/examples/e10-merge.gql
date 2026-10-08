@@ -1,0 +1,4 @@
+MERGE (a:Person {email: $email})
+  ON CREATE SET a.created = datetime("2026-10-07T00:00:00Z")
+  ON MATCH SET a.seen = a.seen + 1
+RETURN id(a);

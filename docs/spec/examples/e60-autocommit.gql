@@ -1,0 +1,2 @@
+CREATE (:Person {name: "Diya"});
+MATCH (n:Person {name: "Diya"}) RETURN id(n);

@@ -1,0 +1,2 @@
+MATCH (a:Person)-[:KNOWS]->(b)
+RETURN count(DISTINCT b.city) AS cities;

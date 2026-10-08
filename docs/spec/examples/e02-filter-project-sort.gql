@@ -1,0 +1,6 @@
+MATCH (a:Person)-[k:KNOWS*1..3]->(b:Person)
+WHERE b.age >= 18 AND NOT b.name STARTS WITH "Z"
+  AND ALL (e IN k WHERE e.since IS NOT NULL)
+RETURN b.name AS name, size(k) AS hops, collect(DISTINCT b.city) AS cities
+ORDER BY hops DESC, name
+SKIP 10 LIMIT 20;

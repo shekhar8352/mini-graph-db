@@ -1,0 +1,3 @@
+CALL db.labels() YIELD label AS name
+WHERE name STARTS WITH "P"
+RETURN name ORDER BY name;

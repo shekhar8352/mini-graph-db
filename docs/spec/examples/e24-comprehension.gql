@@ -1,0 +1,4 @@
+WITH [1, 2, 3, null] AS xs
+RETURN [x IN xs WHERE x > 1 | x * 10] AS tens,
+       ANY (x IN xs WHERE x = 2) AS hasTwo,
+       ALL (x IN xs WHERE x IS NULL OR x > 0) AS ok;

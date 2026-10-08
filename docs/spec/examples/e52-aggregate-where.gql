@@ -1,0 +1,1 @@
+MATCH (n:Person) WHERE count(n) > 1 RETURN n;

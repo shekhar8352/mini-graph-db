@@ -1,0 +1,2 @@
+MATCH (a)<-[:KNOWS]-(b) RETURN id(a), id(b);
+MATCH (a)-[:KNOWS]-(b) RETURN id(b);

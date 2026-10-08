@@ -1,0 +1,5 @@
+MATCH (n:Person)
+WHERE n.name IN ["Ada", "Bob"]
+  AND n.email STARTS WITH "a"
+  AND n.age IS :: INT
+RETURN n;

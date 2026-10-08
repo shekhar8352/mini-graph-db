@@ -1,0 +1,4 @@
+MATCH (a:Person)
+WITH a.name AS name, count(*) AS n
+WHERE n > 1
+RETURN name, n;

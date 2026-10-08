@@ -1,0 +1,4 @@
+MATCH (a), (b)
+WHERE id(a) = 1 AND id(b) = 2
+WITH shortestPath(a, b) AS p
+RETURN length(p) AS hops, nodes(p) AS ns, relationships(p) AS es;

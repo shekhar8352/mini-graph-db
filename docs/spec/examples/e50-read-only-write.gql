@@ -1,0 +1,2 @@
+BEGIN READ ONLY;
+CREATE (:Person {name: "nope"});

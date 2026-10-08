@@ -1,0 +1,1 @@
+RETURN false AND (1 / 0 = 1) AS safe;

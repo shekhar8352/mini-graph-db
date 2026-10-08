@@ -1,0 +1,2 @@
+MATCH (a) WHERE id(a) = 1
+RETURN neighbors(a, 2);

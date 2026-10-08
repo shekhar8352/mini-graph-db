@@ -1,0 +1,4 @@
+MATCH (a), (b)
+WHERE id(a) = $from AND id(b) = $to
+MATCH p = shortestPath((a)-[*]->(b))
+RETURN p;

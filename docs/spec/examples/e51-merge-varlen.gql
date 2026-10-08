@@ -1,0 +1,1 @@
+MERGE (a)-[:KNOWS*1..2]->(b) RETURN a;

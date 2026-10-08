@@ -1,0 +1,5 @@
+MATCH (a:Person)
+WHERE a.age < 0
+SET a.age = 0, a:Flagged
+REMOVE a.temp
+RETURN a;

@@ -1,0 +1,3 @@
+CREATE CONSTRAINT city_name_exists FOR (n:City) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT city_pop_type FOR (n:City) REQUIRE n.pop IS :: INT;
+MATCH (n:City) WHERE n.name IS NOT NULL RETURN n.name;

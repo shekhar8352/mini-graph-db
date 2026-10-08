@@ -1,0 +1,2 @@
+MATCH (n) WHERE id(n) = 1
+RETURN degree(n, "both") AS d, keys(n) AS ks, properties(n) AS props;

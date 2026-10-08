@@ -1,0 +1,2 @@
+MATCH (n:Person)
+RETURN CASE WHEN n.age IS NULL THEN "missing" WHEN n.age >= 18 THEN "adult" ELSE "minor" END AS band;

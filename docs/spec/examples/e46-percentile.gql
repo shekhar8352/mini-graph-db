@@ -1,0 +1,2 @@
+MATCH (n:Person)
+RETURN percentileDisc(n.age, 0.5) AS median, stdev(n.age) AS spread;

@@ -1,0 +1,7 @@
+CREATE INDEX person_name FOR (n:Person) ON (n.name);
+CREATE INDEX knows_since FOR ()-[r:KNOWS]-() ON (r.since);
+CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE;
+CREATE CONSTRAINT person_name_exists FOR (n:Person) REQUIRE n.name IS NOT NULL;
+CREATE CONSTRAINT person_age_type FOR (n:Person) REQUIRE n.age IS :: INT;
+DROP INDEX person_name;
+DROP CONSTRAINT person_email_unique;
