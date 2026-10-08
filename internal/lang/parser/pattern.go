@@ -81,7 +81,9 @@ func (p *Parser) labels() [][]string {
 	return groups
 }
 
-func (p *Parser) rel() *ast.RelPat {
+func (p *Parser) rel() (r *ast.RelPat) {
+	pos := p.here()
+	defer func() { p.pinPos(r, pos) }()
 	if p.at(lexer.LeftArrow) {
 		p.advance()
 		if p.at(lexer.LBracket) {

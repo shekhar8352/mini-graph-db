@@ -93,12 +93,15 @@ func (p *Parser) applyLed(left ast.Expr, info led) ast.Expr {
 		return p.compTail(left)
 	}
 	op := p.cur().Kind.String()
+	pos := p.here()
 	p.advance()
 	rhsMin := info.prec + 1
 	if info.right {
 		rhsMin = info.prec
 	}
-	return &ast.Binary{Op: op, Left: left, Right: p.pratt(rhsMin)}
+	b := &ast.Binary{Op: op, Left: left, Right: p.pratt(rhsMin)}
+	p.pinPos(b, pos)
+	return b
 }
 
 func (p *Parser) compTail(left ast.Expr) ast.Expr {
@@ -108,27 +111,17 @@ func (p *Parser) compTail(left ast.Expr) ast.Expr {
 		if p.cur().Kind == lexer.NotEq {
 			op = "<>"
 		}
-		p.advance()
-		return &ast.Binary{Op: op, Left: left, Right: p.pratt(precAdd)}
+		return p.pinBinary(op, left)
 	case lexer.KwIn:
-		p.advance()
-		return &ast.Binary{Op: "IN", Left: left, Right: p.pratt(precAdd)}
+		return p.pinBinary("IN", left)
 	case lexer.KwStarts:
-		p.advance()
-		if !p.expect(lexer.KwWith) {
-			return left
-		}
-		return &ast.Binary{Op: "STARTS WITH", Left: left, Right: p.pratt(precAdd)}
+		return p.pinBinaryWith("STARTS WITH", lexer.KwWith, left)
 	case lexer.KwEnds:
-		p.advance()
-		if !p.expect(lexer.KwWith) {
-			return left
-		}
-		return &ast.Binary{Op: "ENDS WITH", Left: left, Right: p.pratt(precAdd)}
+		return p.pinBinaryWith("ENDS WITH", lexer.KwWith, left)
 	case lexer.KwContains:
-		p.advance()
-		return &ast.Binary{Op: "CONTAINS", Left: left, Right: p.pratt(precAdd)}
+		return p.pinBinary("CONTAINS", left)
 	case lexer.KwIs:
+		pos := p.here()
 		p.advance()
 		not := false
 		if p.at(lexer.KwNot) {
@@ -139,15 +132,36 @@ func (p *Parser) compTail(left ast.Expr) ast.Expr {
 		if p.at(lexer.ColonColon) {
 			p.advance()
 			pred.Type = p.name()
+			p.pinPos(pred, pos)
 			return pred
 		}
 		if !p.expect(lexer.KwNull) {
 			return pred
 		}
+		p.pinPos(pred, pos)
 		return pred
 	default:
 		return left
 	}
+}
+
+func (p *Parser) pinBinary(op string, left ast.Expr) ast.Expr {
+	pos := p.here()
+	p.advance()
+	b := &ast.Binary{Op: op, Left: left, Right: p.pratt(precAdd)}
+	p.pinPos(b, pos)
+	return b
+}
+
+func (p *Parser) pinBinaryWith(op string, kw lexer.Kind, left ast.Expr) ast.Expr {
+	pos := p.here()
+	p.advance()
+	if !p.expect(kw) {
+		return left
+	}
+	b := &ast.Binary{Op: op, Left: left, Right: p.pratt(precAdd)}
+	p.pinPos(b, pos)
+	return b
 }
 
 func (p *Parser) parsePostfix() ast.Expr {
@@ -155,8 +169,11 @@ func (p *Parser) parsePostfix() ast.Expr {
 	for p.err == nil {
 		switch p.cur().Kind {
 		case lexer.Dot:
+			pos := p.here()
 			p.advance()
-			e = &ast.Property{X: e, Name: p.name()}
+			prop := &ast.Property{X: e, Name: p.name()}
+			p.pinPos(prop, pos)
+			e = prop
 		case lexer.LBracket:
 			e = p.postfixIndex(e)
 		default:
@@ -213,9 +230,12 @@ func (p *Parser) parsePrimary() ast.Expr {
 		p.advance()
 		return &ast.Literal{Kind: ast.LitString, Str: s}
 	case lexer.Param:
+		pos := p.here()
 		s := p.cur().Text
 		p.advance()
-		return &ast.Param{Name: s}
+		n := &ast.Param{Name: s}
+		p.pinPos(n, pos)
+		return n
 	case lexer.LParen:
 		p.advance()
 		e := p.expr()
@@ -246,11 +266,16 @@ func (p *Parser) identOrCall() ast.Expr {
 		p.fail("expected expression")
 		return nil
 	}
+	pos := p.here()
 	name := p.name()
+	var e ast.Expr
 	if !p.at(lexer.LParen) {
-		return &ast.Ident{Name: name}
+		e = &ast.Ident{Name: name}
+	} else {
+		e = p.callExpr(name)
 	}
-	return p.callExpr(name)
+	p.pinPos(e, pos)
+	return e
 }
 
 func (p *Parser) callExpr(name string) ast.Expr {

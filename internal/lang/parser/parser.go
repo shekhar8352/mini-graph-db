@@ -16,24 +16,40 @@ import (
 // "expected … at line:col". When several statements are broken, the error
 // text contains one such message per statement, in order.
 func Parse(src string) (*ast.Script, error) {
-	s, errs := parse(src)
+	s, _, errs := parse(src)
 	if len(errs) == 0 {
 		return s, nil
 	}
 	return nil, joinSyntax(errs)
 }
 
-func parse(src string) (*ast.Script, []error) {
+// Pos is the start of a node in the source. Line and column are 1-based.
+type Pos struct {
+	Line int
+	Col  int
+}
+
+// ParseSpan parses src and returns the start position of nodes the parser pinned.
+// The positions are not stored on the nodes, so a formatted reprint still compares equal.
+func ParseSpan(src string) (*ast.Script, map[ast.Node]Pos, error) {
+	s, pos, errs := parse(src)
+	if len(errs) == 0 {
+		return s, pos, nil
+	}
+	return nil, nil, joinSyntax(errs)
+}
+
+func parse(src string) (*ast.Script, map[ast.Node]Pos, []error) {
 	toks, err := lexer.Scan(src)
 	if err != nil {
-		return nil, []error{err}
+		return nil, nil, []error{err}
 	}
-	p := &Parser{toks: toks}
+	p := &Parser{toks: toks, pos: map[ast.Node]Pos{}}
 	s := p.script()
 	if len(p.errs) > 0 {
-		return nil, p.errs
+		return nil, nil, p.errs
 	}
-	return s, nil
+	return s, p.pos, nil
 }
 
 // Parser is a recursive-descent parser over a token slice.
@@ -43,6 +59,7 @@ type Parser struct {
 	i    int
 	err  error
 	errs []error
+	pos  map[ast.Node]Pos
 }
 
 // joinErr is a list of syntax errors. errors.As finds each one.
@@ -965,4 +982,19 @@ func (p *Parser) integer() int64 {
 
 func (p *Parser) word(s string) bool {
 	return p.at(lexer.Ident) && strings.EqualFold(p.cur().Text, s)
+}
+
+func (p *Parser) here() Pos {
+	t := p.cur()
+	if t.Line == 0 {
+		return Pos{Line: 1, Col: 1}
+	}
+	return Pos{Line: t.Line, Col: t.Col}
+}
+
+func (p *Parser) pinPos(n ast.Node, pos Pos) {
+	if n == nil || p.pos == nil || pos.Line == 0 {
+		return
+	}
+	p.pos[n] = pos
 }
