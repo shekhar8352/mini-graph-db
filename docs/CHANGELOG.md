@@ -4,6 +4,21 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.6 — GQL-lite expression evaluator (2026-10-19)
+
+- **4.6** `internal/exec/expr` evaluates one expression over `value.Value`. `AND` and `OR` skip the right operand when the result is already fixed. Comparisons follow the three-valued rules, including a null result for boolean inequalities and for different kinds.
+- The function library covers the spec tables, plus `bytes(string)`, which decodes standard base64. `Eval` rejects aggregates. `NewAgg` folds `count`, `sum`, `avg`, `min`, `max`, `collect`, `percentileDisc`, and `stdev`, skipping null inputs. `count(*)` counts rows.
+- Graph functions read a `Graph` view. `FromGraph` copies the current graph. `shortestPath` picks the shortest directed path whose edge-id sequence is smallest. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. Evaluation follows the rules already in the spec. |
+| P12 Testing | Operators, functions, temporal arithmetic, graph functions, and aggregates run under `go test -race`. |
+| P13 Documentation | The architecture note and this changelog describe the evaluator. The shell still runs the legacy line language. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.5 — GQL-lite semantic checker (2026-10-08)
 
 - **4.5** `internal/lang/sema` checks a parsed script for scope, clause order, aggregates, pattern shape, and expression kinds. It does not run the query. The shell still runs the legacy line language.
