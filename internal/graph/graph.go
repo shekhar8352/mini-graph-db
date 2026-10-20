@@ -293,6 +293,107 @@ func (g *Graph) UpdateEdgeValues(id uint64, props map[string]value.Value) (Edge,
 	return toEdge(e), nil
 }
 
+// AddLabels adds labels to a node. A label the node already has is a no-op.
+func (g *Graph) AddLabels(id uint64, labels []string) (Node, error) {
+	var n graphstore.Node
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		n, err = graphstore.AddLabels(tx, id, labels)
+		return err
+	})
+	if err != nil {
+		return Node{}, mapErr(err)
+	}
+	return toNode(n), nil
+}
+
+// RemoveLabels removes labels from a node. A missing label is a no-op.
+func (g *Graph) RemoveLabels(id uint64, labels []string) (Node, error) {
+	var n graphstore.Node
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		n, err = graphstore.RemoveLabels(tx, id, labels)
+		return err
+	})
+	if err != nil {
+		return Node{}, mapErr(err)
+	}
+	return toNode(n), nil
+}
+
+// ReplaceNodeProps replaces the property map. A nil map clears every property.
+func (g *Graph) ReplaceNodeProps(id uint64, props map[string]value.Value) (Node, error) {
+	if err := validateProps(props); err != nil {
+		return Node{}, err
+	}
+	var n graphstore.Node
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		n, err = graphstore.ReplaceNodeProps(tx, id, props)
+		return err
+	})
+	if err != nil {
+		return Node{}, mapErr(err)
+	}
+	return toNode(n), nil
+}
+
+// DeleteNodeProps removes named properties. A missing name is a no-op.
+func (g *Graph) DeleteNodeProps(id uint64, names []string) (Node, error) {
+	var n graphstore.Node
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		n, err = graphstore.DeleteNodeProps(tx, id, names)
+		return err
+	})
+	if err != nil {
+		return Node{}, mapErr(err)
+	}
+	return toNode(n), nil
+}
+
+// ReplaceEdgeProps replaces the edge property map. A nil map clears it.
+func (g *Graph) ReplaceEdgeProps(id uint64, props map[string]value.Value) (Edge, error) {
+	if err := validateProps(props); err != nil {
+		return Edge{}, err
+	}
+	var e graphstore.Edge
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		e, err = graphstore.ReplaceEdgeProps(tx, id, props)
+		return err
+	})
+	if err != nil {
+		return Edge{}, mapErr(err)
+	}
+	return toEdge(e), nil
+}
+
+// DeleteEdgeProps removes named edge properties. A missing name is a no-op.
+func (g *Graph) DeleteEdgeProps(id uint64, names []string) (Edge, error) {
+	var e graphstore.Edge
+	err := g.write(func(tx storage.Tx) error {
+		var err error
+		e, err = graphstore.DeleteEdgeProps(tx, id, names)
+		return err
+	})
+	if err != nil {
+		return Edge{}, mapErr(err)
+	}
+	return toEdge(e), nil
+}
+
+// IncidentEdges returns the ids of edges that touch nodeID.
+func (g *Graph) IncidentEdges(nodeID uint64) ([]uint64, error) {
+	var ids []uint64
+	err := g.read(func(tx storage.Tx) error {
+		var err error
+		ids, err = graphstore.Incident(tx, nodeID)
+		return err
+	})
+	return ids, mapErr(err)
+}
+
 // DeleteEdge removes an edge. Endpoints are left intact.
 func (g *Graph) DeleteEdge(id uint64) error {
 	return mapErr(g.write(func(tx storage.Tx) error {
@@ -306,6 +407,17 @@ func (g *Graph) NodesByLabel(label string) []Node {
 	_ = g.read(func(tx storage.Tx) error {
 		var err error
 		nodes, err = graphstore.NodesByLabel(tx, label)
+		return err
+	})
+	return toNodes(nodes)
+}
+
+// NodesByValue returns nodes whose property equals val, using the property index.
+func (g *Graph) NodesByValue(key string, val value.Value) []Node {
+	var nodes []graphstore.Node
+	_ = g.read(func(tx storage.Tx) error {
+		var err error
+		nodes, err = graphstore.NodesByPropEq(tx, key, val)
 		return err
 	})
 	return toNodes(nodes)
