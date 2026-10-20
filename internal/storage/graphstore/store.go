@@ -247,6 +247,122 @@ func UpdateEdge(tx storage.Tx, id uint64, props map[string]value.Value) (Edge, e
 	return rec.Edge, nil
 }
 
+// AddLabels adds labels to a node. A label the node already has is a no-op.
+func AddLabels(tx storage.Tx, id uint64, add []string) (Node, error) {
+	n, err := GetNode(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	return rewriteNode(tx, n, append(append([]string{}, n.Labels...), add...), n.Props)
+}
+
+// RemoveLabels removes labels from a node. A missing label is a no-op.
+func RemoveLabels(tx storage.Tx, id uint64, drop []string) (Node, error) {
+	n, err := GetNode(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	gone := map[string]struct{}{}
+	for _, l := range drop {
+		gone[l] = struct{}{}
+	}
+	var keep []string
+	for _, l := range n.Labels {
+		if _, ok := gone[l]; ok {
+			continue
+		}
+		keep = append(keep, l)
+	}
+	return rewriteNode(tx, n, keep, n.Props)
+}
+
+// ReplaceNodeProps replaces the property map. A nil map clears every property.
+func ReplaceNodeProps(tx storage.Tx, id uint64, props map[string]value.Value) (Node, error) {
+	n, err := GetNode(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	ps, err := assignProps(tx, props)
+	if err != nil {
+		return Node{}, err
+	}
+	return rewriteNode(tx, n, n.Labels, ps)
+}
+
+// DeleteNodeProps removes named properties. A missing name is a no-op.
+func DeleteNodeProps(tx storage.Tx, id uint64, names []string) (Node, error) {
+	n, err := GetNode(tx, id)
+	if err != nil {
+		return Node{}, err
+	}
+	return rewriteNode(tx, n, n.Labels, dropProps(n.Props, names))
+}
+
+// ReplaceEdgeProps replaces the edge property map.
+func ReplaceEdgeProps(tx storage.Tx, id uint64, props map[string]value.Value) (Edge, error) {
+	rec, err := loadEdge(tx, id)
+	if err != nil {
+		return Edge{}, err
+	}
+	ps, err := assignProps(tx, props)
+	if err != nil {
+		return Edge{}, err
+	}
+	rec.Props = ps
+	if err := writeEdge(tx, rec); err != nil {
+		return Edge{}, err
+	}
+	return rec.Edge, nil
+}
+
+// DeleteEdgeProps removes named edge properties. A missing name is a no-op.
+func DeleteEdgeProps(tx storage.Tx, id uint64, names []string) (Edge, error) {
+	rec, err := loadEdge(tx, id)
+	if err != nil {
+		return Edge{}, err
+	}
+	rec.Props = dropProps(rec.Props, names)
+	if err := writeEdge(tx, rec); err != nil {
+		return Edge{}, err
+	}
+	return rec.Edge, nil
+}
+
+// Incident returns the ids of edges that touch nodeID.
+func Incident(tx storage.Tx, nodeID uint64) ([]uint64, error) {
+	return incidentEdges(tx, nodeID)
+}
+
+func rewriteNode(tx storage.Tx, n Node, labels []string, props []Prop) (Node, error) {
+	if err := unindexLabels(tx, n.ID, n.Labels); err != nil {
+		return Node{}, err
+	}
+	if err := unindexProps(tx, n.ID, n.Props); err != nil {
+		return Node{}, err
+	}
+	n.Labels = normalizeLabels(labels)
+	n.Props = props
+	if err := writeNode(tx, n); err != nil {
+		return Node{}, err
+	}
+	return n, nil
+}
+
+func dropProps(props []Prop, names []string) []Prop {
+	gone := map[string]struct{}{}
+	for _, n := range names {
+		gone[n] = struct{}{}
+	}
+	var keep []Prop
+	for _, p := range props {
+		if _, ok := gone[p.Name]; ok {
+			continue
+		}
+		keep = append(keep, p)
+	}
+	return keep
+}
+
 // DeleteEdge removes an edge. Endpoints are left intact.
 func DeleteEdge(tx storage.Tx, id uint64) error {
 	rec, err := loadEdge(tx, id)
