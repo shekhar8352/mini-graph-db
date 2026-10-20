@@ -427,7 +427,7 @@ A `BEGIN READ ONLY` transaction rejects a writing statement with `InvalidArgumen
 
 A script runs statements in order and produces one result per non-empty statement. An error stops the script. Statements that already auto-committed stay committed. Inside an explicit transaction, earlier statements of that transaction remain, and the failed statement's writes do not.
 
-`EXPLAIN query` returns one column, `plan`, and does not run the query. `PROFILE query` runs it and returns the query's columns plus operator statistics. The plan printer names these logical operators: `NodeScan`, `LabelScan`, `IndexSeek`, `Expand`, `Filter`, `Project`, `Aggregate`, `Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Unwind`, `Optional`, `Apply`, `Create`, `Merge`, `SetProps`, `SetLabels`, `Remove`, `Delete`, `ShortestPath`. DDL and DCL print as a single leaf of that statement's name. The text format is fixed by the plan printer and is stable across runs.
+`EXPLAIN query` returns one column, `plan`, and does not run the query. `PROFILE query` runs it and returns the query's columns plus operator statistics. The plan printer names these logical operators: `NodeScan`, `LabelScan`, `IndexSeek`, `Expand`, `Filter`, `Project`, `Aggregate`, `Sort`, `Limit`, `Skip`, `Distinct`, `Union`, `Unwind`, `Optional`, `Apply`, `Create`, `Merge`, `SetProps`, `SetLabels`, `Remove`, `Delete`, `ShortestPath`. DDL and DCL print as a single leaf of that statement's name. A procedure prints as `Call`. The printer is `internal/lang/plan`, and `Format` is that stable text. `EXPLAIN` and `PROFILE` print the plan of the inner query.
 
 ## Result of a query
 
