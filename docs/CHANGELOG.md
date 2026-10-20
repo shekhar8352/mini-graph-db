@@ -4,6 +4,35 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.8 — GQL-lite executor (2026-10-20)
+
+- **4.8** `internal/exec` runs a logical plan with Volcano iterators. Each operator yields one row. `Run` returns the columns and rows of the last statement. A write with no `RETURN` yields no rows. `EXPLAIN` and `PROFILE` are not executed.
+- Sort, aggregate, and distinct charge buffered rows against the per-query budget. The default is 8 MiB. Crossing it is `ResourceExhausted`. A canceled context stops the pull. An open variable-length walk that reaches `max_pattern_hops` (default 128) is `ResourceExhausted`. Spill to disk stays in the backlog.
+- `CREATE`, `MERGE`, `SET`, `REMOVE`, and `DELETE` write the graph. `SET` of null removes the property. `DETACH DELETE` removes incident edges. Rolling a failed statement back is Phase 4.9. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. Execution follows the rules already in the spec. |
+| P12 Testing | Read pipelines, mutation, the memory budget, cancellation, and the hop limit run under `go test -race`. |
+| P13 Documentation | The architecture note, the README, and this changelog describe the executor. The shell still runs the legacy line language. |
+| P1–P9, P11 | No change to the page format, the log format, or the shell. Blocking operators honor the per-query memory budget. |
+
+### Phase 4.7 — GQL-lite logical plan (2026-10-20)
+
+- **4.7** `internal/lang/plan` builds a logical plan for a script that passes the semantic checker. `IndexSeek` is the one-label property-map shape. `EXPLAIN` and `PROFILE` print the inner query. The printer does not run the query.
+- A procedure prints as `Call`. DDL and DCL print as one leaf named for that statement. `Format` is the stable `EXPLAIN` text. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. The printer uses the operator names already in the spec. |
+| P12 Testing | Shape snapshots and the example corpus run under `go test -race`. |
+| P13 Documentation | The architecture note, the README, the spec, and this changelog describe the printer. The shell still runs the legacy line language. |
+| P1–P9, P11 | No runtime change to storage, transactions, or the shell. |
+
 ### Phase 4.6 — GQL-lite expression evaluator (2026-10-19)
 
 - **4.6** `internal/exec/expr` evaluates one expression over `value.Value`. `AND` and `OR` skip the right operand when the result is already fixed. Comparisons follow the three-valued rules, including a null result for boolean inequalities and for different kinds.
