@@ -1,7 +1,8 @@
 // Package exec runs a GQL-lite script through Volcano iterators.
 // Each operator yields one row at a time. Sort, aggregate, and distinct
 // count their buffered rows against the per-query memory budget.
-// The shell still uses the legacy line language.
+// Each statement is atomic inside the open transaction. In auto-commit the
+// statement has a transaction of its own. The shell still uses the legacy line language.
 package exec
 
 import (
@@ -35,6 +36,9 @@ type Options struct {
 // Run plans src and pulls every operator to completion.
 // It returns the columns and rows of the last statement.
 // A writing statement with no RETURN yields no rows.
+// A failed statement drops its own writes. An explicit transaction stays open.
+// In auto-commit the statement's transaction is rolled back, and earlier
+// statements in the script stay committed. An error stops the script.
 // EXPLAIN and PROFILE are not executed.
 func Run(ctx context.Context, g *graph.Graph, src string, opt Options) ([]string, [][]value.Value, error) {
 	if g == nil {
@@ -63,15 +67,84 @@ func Run(ctx context.Context, g *graph.Graph, src string, opt Options) ([]string
 	if err := eng.refresh(); err != nil {
 		return nil, nil, err
 	}
+	var stmts []ast.Stmt
+	if script != nil {
+		stmts = script.Stmts
+	}
+	if len(stmts) != len(p.Stmts) {
+		return nil, nil, gerr.New(gerr.Internal, "plan does not match the script")
+	}
 	var cols []string
 	var rows [][]value.Value
-	for _, st := range p.Stmts {
-		cols, rows, err = eng.runOp(ctx, st)
+	for i, st := range p.Stmts {
+		cols, rows, err = eng.runStmt(ctx, stmts[i], st)
 		if err != nil {
 			return nil, nil, err
 		}
 	}
 	return cols, rows, nil
+}
+
+func (e *engine) runStmt(ctx context.Context, st ast.Stmt, op plan.Op) ([]string, [][]value.Value, error) {
+	if txnControl(st) {
+		return e.runOp(ctx, op)
+	}
+	if e.g.InTransaction() {
+		mark, err := e.g.Mark()
+		if err != nil {
+			return nil, nil, err
+		}
+		cols, rows, err := e.runBody(ctx, st, op)
+		if err != nil {
+			if rb := e.g.RollbackTo(mark); rb != nil {
+				return nil, nil, rb
+			}
+			return nil, nil, err
+		}
+		return cols, rows, nil
+	}
+	if err := e.g.Begin(false); err != nil {
+		return nil, nil, err
+	}
+	cols, rows, err := e.runBody(ctx, st, op)
+	if err != nil {
+		_ = e.g.Rollback()
+		return nil, nil, err
+	}
+	if err := e.g.Commit(); err != nil {
+		_ = e.g.Rollback()
+		return nil, nil, err
+	}
+	return cols, rows, nil
+}
+
+func (e *engine) runBody(ctx context.Context, st ast.Stmt, op plan.Op) ([]string, [][]value.Value, error) {
+	if c, ok := st.(*ast.CreateConstraint); ok && nodeUnique(c) {
+		if err := e.g.DeclareUnique(c.Name, c.For.On, c.Prop); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
+	if d, ok := st.(*ast.DropConstraint); ok {
+		if err := e.g.DropUnique(d.Name); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, nil
+	}
+	return e.runOp(ctx, op)
+}
+
+func txnControl(st ast.Stmt) bool {
+	switch st.(type) {
+	case *ast.Begin, *ast.Commit, *ast.Rollback:
+		return true
+	default:
+		return false
+	}
+}
+
+func nodeUnique(c *ast.CreateConstraint) bool {
+	return c.Kind == ast.ConstraintUnique && c.For != nil && !c.For.Edge && c.For.On != "" && c.Prop != ""
 }
 
 type engine struct {

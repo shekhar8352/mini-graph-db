@@ -56,17 +56,25 @@ func (g *Graph) Begin(readOnly bool) error {
 }
 
 // Commit publishes the explicit transaction.
-// A conflict or a failed pre-commit hook leaves the transaction open.
+// A conflict, a unique-constraint failure, or a failed pre-commit hook leaves
+// the transaction open.
 func (g *Graph) Commit() error {
 	g.mu.Lock()
 	tx := g.held
 	ro := g.heldRO
-	g.held = nil
-	g.heldRO = false
 	g.mu.Unlock()
 	if tx == nil {
 		return gerr.New(gerr.InvalidArgument, "no transaction")
 	}
+	if !ro {
+		if err := g.prepareUniques(tx); err != nil {
+			return err
+		}
+	}
+	g.mu.Lock()
+	g.held = nil
+	g.heldRO = false
+	g.mu.Unlock()
 	err := tx.Commit()
 	if err != nil && txOpen(tx) {
 		g.mu.Lock()
@@ -97,6 +105,47 @@ func (g *Graph) InReadOnlyTxn() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.held != nil && g.heldRO
+}
+
+// InTransaction reports whether an explicit transaction is open.
+func (g *Graph) InTransaction() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.held != nil
+}
+
+// Mark remembers the open transaction's writes. A later RollbackTo restores them.
+func (g *Graph) Mark() (int, error) {
+	g.mu.Lock()
+	tx := g.held
+	g.mu.Unlock()
+	if tx == nil {
+		return 0, gerr.New(gerr.InvalidArgument, "no transaction")
+	}
+	sp, ok := tx.(interface {
+		Mark() (int, error)
+	})
+	if !ok {
+		return 0, gerr.New(gerr.Internal, "transaction has no savepoint")
+	}
+	return sp.Mark()
+}
+
+// RollbackTo restores the open transaction to mark. The transaction stays open.
+func (g *Graph) RollbackTo(mark int) error {
+	g.mu.Lock()
+	tx := g.held
+	g.mu.Unlock()
+	if tx == nil {
+		return gerr.New(gerr.InvalidArgument, "no transaction")
+	}
+	sp, ok := tx.(interface {
+		RollbackTo(int) error
+	})
+	if !ok {
+		return gerr.New(gerr.Internal, "transaction has no savepoint")
+	}
+	return sp.RollbackTo(mark)
 }
 
 // Vacuum asks the engine to drop versions no open snapshot can read.

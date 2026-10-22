@@ -7,6 +7,8 @@ import (
 
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
+	"github.com/shekhar8352/mini-graph-db/internal/storage/memory"
+	"github.com/shekhar8352/mini-graph-db/internal/txn"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
@@ -202,4 +204,152 @@ func mustRun(t *testing.T, g *graph.Graph, src string, opt Options) ([]string, [
 func str(v value.Value) string {
 	s, _ := v.StringValue()
 	return s
+}
+
+func sawName(rows [][]value.Value, name string) bool {
+	for _, r := range rows {
+		if len(r) > 0 && str(r[0]) == name {
+			return true
+		}
+	}
+	return false
+}
+
+func sawNull(rows [][]value.Value) bool {
+	for _, r := range rows {
+		if len(r) > 0 && r[0].Kind() == value.KindNull {
+			return true
+		}
+	}
+	return false
+}
+
+func TestStatementAtomicity(t *testing.T) {
+	g := graph.New()
+	_, _, err := Run(context.Background(), g, `
+		CREATE (a:Person {name: "A"})-[:KNOWS]->(b:Person);
+		CREATE (c:Person)-[:KNOWS]->(d:Person) DELETE c;
+		CREATE (e:Person {name: "E"})
+	`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation {
+		t.Fatalf("script %v", err)
+	}
+	if g.InTransaction() {
+		t.Fatal("auto-commit left a transaction open")
+	}
+	_, rows := mustRun(t, g, `MATCH (n:Person) RETURN n.name AS name`, Options{})
+	if len(rows) != 2 || !sawName(rows, "A") || !sawNull(rows) {
+		t.Fatalf("committed %#v", rows)
+	}
+	if g.Stats().Nodes != 2 || g.Stats().Edges != 1 {
+		t.Fatalf("stats %+v", g.Stats())
+	}
+
+	g = graph.New()
+	mustRun(t, g, `BEGIN`, Options{})
+	mustRun(t, g, `CREATE (a:Person {name: "A"})`, Options{})
+	_, _, err = Run(context.Background(), g, `CREATE (b:Person)-[:KNOWS]->(c:Person) DELETE b`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation {
+		t.Fatalf("inner %v", err)
+	}
+	if !g.InTransaction() {
+		t.Fatal("explicit transaction closed")
+	}
+	_, rows = mustRun(t, g, `MATCH (n:Person) RETURN n.name AS name`, Options{})
+	if len(rows) != 1 || str(rows[0][0]) != "A" {
+		t.Fatalf("kept %#v", rows)
+	}
+	mustRun(t, g, `COMMIT`, Options{})
+	if g.InTransaction() || g.Stats().Nodes != 1 {
+		t.Fatalf("after commit open=%v nodes=%d", g.InTransaction(), g.Stats().Nodes)
+	}
+
+	g = graph.New()
+	mustRun(t, g, `CREATE (a:Person {name: "Ada", city: "Paris"})`, Options{})
+	_, _, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) SET a.name = null CREATE (b)-[:KNOWS]->(c) DELETE b`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation {
+		t.Fatalf("set rollback %v", err)
+	}
+	if _, ok := g.AllNodes()[0].Prop("name"); !ok {
+		t.Fatal("name was cleared")
+	}
+
+	mustRun(t, g, `MATCH (a {name: "Ada"}) SET a = null`, Options{})
+	node := g.AllNodes()[0]
+	if len(node.Properties()) != 0 || !node.HasLabel("Person") {
+		t.Fatalf("cleared %#v", node.Properties())
+	}
+	mustRun(t, g, `MATCH (a) SET a.name = "Ada"`, Options{})
+	mustRun(t, g, `MATCH (a) DELETE null`, Options{})
+	if g.Stats().Nodes != 1 {
+		t.Fatalf("delete null %d", g.Stats().Nodes)
+	}
+	mustRun(t, g, `MATCH (a) DELETE a, a`, Options{})
+	if g.Stats().Nodes != 0 {
+		t.Fatalf("double delete %d", g.Stats().Nodes)
+	}
+
+	g = graph.New()
+	mustRun(t, g, `MERGE (a:Person {name: "Ada"})`, Options{})
+	mustRun(t, g, `MERGE (a:Person {name: "Ada"}) ON MATCH SET a.seen = a.seen + 1`, Options{})
+	if _, ok := g.AllNodes()[0].Prop("seen"); ok {
+		t.Fatal("null property remains")
+	}
+
+	mustRun(t, g, `BEGIN READ ONLY`, Options{})
+	_, _, err = Run(context.Background(), g, `CREATE (a:Person)`, Options{})
+	if gerr.CodeOf(err) != gerr.InvalidArgument || !g.InTransaction() {
+		t.Fatalf("readonly %v open=%v", err, g.InTransaction())
+	}
+	mustRun(t, g, `COMMIT`, Options{})
+}
+
+func TestUniqueAtCommit(t *testing.T) {
+	g := graph.New()
+	mustRun(t, g, `CREATE (a:Person {email: "a@b.c"})`, Options{})
+	mustRun(t, g, `CREATE (b:Person {email: "a@b.c"})`, Options{})
+	_, _, err := Run(context.Background(), g, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation || g.Stats().Nodes != 2 {
+		t.Fatalf("existing dup %v nodes %d", err, g.Stats().Nodes)
+	}
+	mustRun(t, g, `CREATE (c:Person {email: "a@b.c"})`, Options{})
+
+	g = graph.New()
+	mustRun(t, g, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
+	mustRun(t, g, `BEGIN`, Options{})
+	mustRun(t, g, `CREATE (a:Person {email: "a@b.c"})`, Options{})
+	mustRun(t, g, `CREATE (b:Person {email: "a@b.c"})`, Options{})
+	_, _, err = Run(context.Background(), g, `COMMIT`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation || !g.InTransaction() {
+		t.Fatalf("same tx %v open=%v", err, g.InTransaction())
+	}
+	mustRun(t, g, `ROLLBACK`, Options{})
+	if g.Stats().Nodes != 0 {
+		t.Fatalf("rolled %d", g.Stats().Nodes)
+	}
+
+	eng := memory.Open()
+	m, err := txn.Open(eng, txn.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = m.Close() })
+	g1 := graph.NewWith(m)
+	g2 := graph.NewWith(m)
+	mustRun(t, g1, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
+	mustRun(t, g1, `BEGIN`, Options{})
+	mustRun(t, g2, `BEGIN`, Options{})
+	mustRun(t, g1, `MERGE (a:Person {name: "Ada"}) ON CREATE SET a.email = "a@b.c"`, Options{})
+	mustRun(t, g2, `MERGE (a:Person {name: "Ada"}) ON CREATE SET a.email = "a@b.c"`, Options{})
+	mustRun(t, g1, `COMMIT`, Options{})
+	_, _, err = Run(context.Background(), g2, `COMMIT`, Options{})
+	if gerr.CodeOf(err) != gerr.ConstraintViolation || !g2.InTransaction() {
+		t.Fatalf("second commit %v open=%v", err, g2.InTransaction())
+	}
+	mustRun(t, g2, `ROLLBACK`, Options{})
+	got := graph.NewWith(m)
+	_, rows := mustRun(t, got, `MATCH (a:Person) RETURN a.email AS email`, Options{})
+	if len(rows) != 1 || str(rows[0][0]) != "a@b.c" {
+		t.Fatalf("winner %#v", rows)
+	}
 }
