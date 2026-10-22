@@ -114,6 +114,7 @@ type diskTx struct {
 	eng    *Engine
 	gen    uint64
 	writes map[storage.Keyspace]map[string]writeOp
+	marks  []map[storage.Keyspace]map[string]writeOp
 	ro     bool
 	done   bool
 	flag   atomic.Bool
@@ -515,6 +516,7 @@ func (t *diskTx) finish(e *Engine) {
 	t.done = true
 	t.flag.Store(true)
 	t.writes = nil
+	t.marks = nil
 	delete(e.open, t)
 }
 

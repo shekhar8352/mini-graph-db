@@ -22,6 +22,10 @@ const (
 	catPropRev   byte = 0x81
 	catLabelRev  byte = 0x82
 	catTypeRev   byte = 0x83
+	// catUniqueDef names a node UNIQUE constraint. catUniqueIdx maps one
+	// property value to the node that holds it. Both are checked at commit.
+	catUniqueDef byte = 0x10
+	catUniqueIdx byte = 0x11
 )
 
 func idKey(id uint64) []byte {

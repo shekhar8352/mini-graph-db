@@ -176,6 +176,51 @@ func (t *diskTx) Rollback() error {
 	return nil
 }
 
+// Mark remembers the write set. The transaction stays open.
+func (t *diskTx) Mark() (int, error) {
+	e := t.eng
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if t.done {
+		return 0, storage.ErrDone
+	}
+	t.marks = append(t.marks, cloneDiskWrites(t.writes))
+	return len(t.marks), nil
+}
+
+// RollbackTo restores the write set from Mark and drops later marks.
+// The transaction stays open.
+func (t *diskTx) RollbackTo(mark int) error {
+	e := t.eng
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if t.done {
+		return storage.ErrDone
+	}
+	if mark < 1 || mark > len(t.marks) {
+		return gerr.New(gerr.InvalidArgument, "savepoint is out of range")
+	}
+	t.writes = t.marks[mark-1]
+	for i := mark - 1; i < len(t.marks); i++ {
+		t.marks[i] = nil
+	}
+	t.marks = t.marks[:mark-1]
+	return nil
+}
+
+func cloneDiskWrites(in map[storage.Keyspace]map[string]writeOp) map[storage.Keyspace]map[string]writeOp {
+	out := make(map[storage.Keyspace]map[string]writeOp, len(in))
+	for ks, ops := range in {
+		cp := make(map[string]writeOp, len(ops))
+		for k, op := range ops {
+			op.val = cloneBytes(op.val)
+			cp[k] = op
+		}
+		out[ks] = cp
+	}
+	return out
+}
+
 func (e *Engine) applyOps(ops []op) error {
 	newGen := e.gen + 1
 	for _, op := range ops {
