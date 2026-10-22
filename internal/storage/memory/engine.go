@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/storage"
 )
 
@@ -41,6 +42,7 @@ type memTx struct {
 	eng    *Engine
 	snap   *snapshot
 	writes map[storage.Keyspace]map[string]writeOp
+	marks  []map[storage.Keyspace]map[string]writeOp
 	ro     bool
 	done   bool
 }
@@ -268,10 +270,54 @@ func (t *memTx) Rollback() error {
 	return nil
 }
 
+// Mark remembers the write set. The transaction stays open.
+func (t *memTx) Mark() (int, error) {
+	t.eng.mu.Lock()
+	defer t.eng.mu.Unlock()
+	if t.done {
+		return 0, storage.ErrDone
+	}
+	t.marks = append(t.marks, cloneMemWrites(t.writes))
+	return len(t.marks), nil
+}
+
+// RollbackTo restores the write set from Mark and drops later marks.
+// The transaction stays open.
+func (t *memTx) RollbackTo(mark int) error {
+	t.eng.mu.Lock()
+	defer t.eng.mu.Unlock()
+	if t.done {
+		return storage.ErrDone
+	}
+	if mark < 1 || mark > len(t.marks) {
+		return gerr.New(gerr.InvalidArgument, "savepoint is out of range")
+	}
+	t.writes = t.marks[mark-1]
+	for i := mark - 1; i < len(t.marks); i++ {
+		t.marks[i] = nil
+	}
+	t.marks = t.marks[:mark-1]
+	return nil
+}
+
 func (t *memTx) finishLocked() {
 	t.done = true
 	t.writes = nil
+	t.marks = nil
 	delete(t.eng.open, t)
+}
+
+func cloneMemWrites(in map[storage.Keyspace]map[string]writeOp) map[storage.Keyspace]map[string]writeOp {
+	out := make(map[storage.Keyspace]map[string]writeOp, len(in))
+	for ks, ops := range in {
+		cp := make(map[string]writeOp, len(ops))
+		for k, op := range ops {
+			op.val = copyBytes(op.val)
+			cp[k] = op
+		}
+		out[ks] = cp
+	}
+	return out
 }
 
 func (t *memTx) materialize(ks storage.Keyspace) ([][]byte, [][]byte) {

@@ -29,6 +29,7 @@ type Tx struct {
 	ro       bool
 	done     bool
 	writes   map[storage.Keyspace]map[string]writeOp
+	marks    []map[storage.Keyspace]map[string]writeOp
 	last     time.Time
 	started  time.Time
 }
@@ -114,6 +115,12 @@ func (t *Tx) InsertUnique(ks storage.Keyspace, key, val []byte) error {
 			return err
 		}
 	}
+	return t.put(ks, key, val, true)
+}
+
+// DeferUnique buffers a unique write and leaves the existence check to Commit.
+// Commit returns ConstraintViolation when another live value of key exists.
+func (t *Tx) DeferUnique(ks storage.Keyspace, key, val []byte) error {
 	return t.put(ks, key, val, true)
 }
 
@@ -290,6 +297,7 @@ func (t *Tx) Commit() error {
 	t.mu.Lock()
 	t.done = true
 	t.writes = nil
+	t.marks = nil
 	t.commitTS = cts
 	t.mu.Unlock()
 
@@ -311,6 +319,7 @@ func (t *Tx) Rollback() error {
 	id := t.id
 	t.done = true
 	t.writes = nil
+	t.marks = nil
 	t.mu.Unlock()
 	t.m.drop(t, true)
 	if had {
@@ -319,10 +328,47 @@ func (t *Tx) Rollback() error {
 	return nil
 }
 
+// Mark remembers the write set. The transaction stays open.
+func (t *Tx) Mark() (int, error) {
+	if err := t.touch(); err != nil {
+		return 0, err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.done {
+		return 0, storage.ErrDone
+	}
+	t.marks = append(t.marks, cloneWrites(t.writes))
+	return len(t.marks), nil
+}
+
+// RollbackTo restores the write set from Mark and drops later marks.
+// The transaction stays open.
+func (t *Tx) RollbackTo(mark int) error {
+	if err := t.touch(); err != nil {
+		return err
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.done {
+		return storage.ErrDone
+	}
+	if mark < 1 || mark > len(t.marks) {
+		return gerr.New(gerr.InvalidArgument, "savepoint is out of range")
+	}
+	t.writes = t.marks[mark-1]
+	for i := mark - 1; i < len(t.marks); i++ {
+		t.marks[i] = nil
+	}
+	t.marks = t.marks[:mark-1]
+	return nil
+}
+
 func (t *Tx) finish(rollback bool) {
 	t.mu.Lock()
 	t.done = true
 	t.writes = nil
+	t.marks = nil
 	t.mu.Unlock()
 	t.m.mu.Lock()
 	delete(t.m.open, t)
@@ -398,6 +444,7 @@ func resolve(stx storage.Tx, ks storage.Keyspace, key []byte, h head, ok bool, s
 }
 
 func validate(stx storage.Tx, snap uint64, writes map[storage.Keyspace]map[string]writeOp) error {
+	var conflict error
 	for ks, ops := range writes {
 		for k, op := range ops {
 			h, ok, err := readHead(stx, ks, []byte(k))
@@ -411,14 +458,17 @@ func validate(stx storage.Tx, snap uint64, writes map[storage.Keyspace]map[strin
 				if op.unique {
 					return gerr.New(gerr.ConstraintViolation, "unique key was committed by another transaction")
 				}
-				return gerr.New(gerr.Conflict, "write conflict")
+				if conflict == nil {
+					conflict = gerr.New(gerr.Conflict, "write conflict")
+				}
+				continue
 			}
 			if op.unique && !op.del && h.delete == 0 && !op.shadowed {
 				return gerr.New(gerr.ConstraintViolation, "unique key already exists")
 			}
 		}
 	}
-	return nil
+	return conflict
 }
 
 func publish(stx storage.Tx, cts uint64, writes map[storage.Keyspace]map[string]writeOp) (int, error) {
