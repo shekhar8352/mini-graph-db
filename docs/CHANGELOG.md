@@ -4,6 +4,22 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.9 — Mutation atomicity (2026-10-22)
+
+- **4.9** A write statement is one unit inside the open transaction. An error drops that statement's writes. An explicit transaction stays open, and earlier statements in it remain. In auto-commit the statement's transaction is rolled back. An error stops the script; statements that already committed stay committed.
+- `MERGE` takes no row lock. A `UNIQUE` constraint on a node property is checked when the enclosing transaction commits. Two open transactions can both create; the second commit returns `ConstraintViolation` and that transaction stays open. `SET` of null removes the property. `SET n = null` removes every property. `DETACH DELETE` removes incident edges and then the node. `DELETE null` and a repeated delete do nothing.
+- Existence, type, and edge constraints parse and wait for phase 5. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P3 Transactions | A node `UNIQUE` constraint is checked at commit. The conflict is `ConstraintViolation`. `MERGE` takes no row lock. |
+| P10 Change management | Grammar version stays 1. Statement atomicity follows the mutation rules already in the spec. |
+| P12 Testing | Savepoints, statement rollback, and the two-session unique conflict run under `go test -race`. |
+| P13 Documentation | The architecture note, the README, and this changelog describe statement atomicity. The shell still runs the legacy line language. |
+| P1–P9, P11 | No change to the page format, the log format, or the shell. |
+
 ### Phase 4.8 — GQL-lite executor (2026-10-20)
 
 - **4.8** `internal/exec` runs a logical plan with Volcano iterators. Each operator yields one row. `Run` returns the columns and rows of the last statement. A write with no `RETURN` yields no rows. `EXPLAIN` and `PROFILE` are not executed.
