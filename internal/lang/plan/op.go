@@ -32,6 +32,17 @@ func (p *Plan) String() string {
 	return b.String()
 }
 
+// Title is the one-line EXPLAIN name of op.
+func Title(op Op) string {
+	if op == nil {
+		return ""
+	}
+	return title(op)
+}
+
+// Children returns the operator inputs in printer order.
+func Children(op Op) []Op { return children(op) }
+
 // Format prints one operator tree. The text ends with a newline.
 func Format(op Op) string {
 	if op == nil {

@@ -25,30 +25,33 @@ func PutUnique(tx storage.Tx, name, label, prop string) error {
 }
 
 // DropUnique removes a UNIQUE constraint and its index keys.
-// A missing name leaves the catalog unchanged.
-func DropUnique(tx storage.Tx, name string) error {
+// A missing name leaves the catalog unchanged and reports false.
+func DropUnique(tx storage.Tx, name string) (bool, error) {
 	key := catalogKey(catUniqueDef, name)
 	raw, err := tx.Get(storage.KSCatalog, key)
 	if errors.Is(err, storage.ErrNotFound) {
-		return nil
+		return false, nil
 	}
 	if err != nil {
-		return err
+		return false, err
 	}
 	label, prop, err := decodeUnique(raw)
 	if err != nil {
-		return err
+		return false, err
 	}
 	keys, err := scanPrefix(tx, storage.KSCatalog, uniquePrefix(label, prop))
 	if err != nil {
-		return err
+		return false, err
 	}
 	for _, k := range keys {
 		if err := tx.Delete(storage.KSCatalog, k); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return tx.Delete(storage.KSCatalog, key)
+	if err := tx.Delete(storage.KSCatalog, key); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // ListUniques returns every stored node UNIQUE constraint.

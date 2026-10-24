@@ -93,6 +93,7 @@ func (e *engine) allIDs() []uint64 {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	e.hit(int64(len(ids)))
 	return ids
 }
 
@@ -104,6 +105,7 @@ func (e *engine) labelIDs(pat *ast.NodePat) []uint64 {
 	var ids []uint64
 	for _, lab := range pat.Labels[0] {
 		for _, n := range e.g.NodesByLabel(lab) {
+			e.hit(1)
 			if _, ok := seen[n.ID]; ok {
 				continue
 			}
@@ -129,6 +131,7 @@ func (e *engine) seekIDs(pat *ast.NodePat, seed row) ([]uint64, error) {
 	}
 	var ids []uint64
 	for _, n := range e.g.NodesByValue(ent.Key, v) {
+		e.hit(1)
 		ids = append(ids, n.ID)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })

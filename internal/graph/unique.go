@@ -29,12 +29,17 @@ func (g *Graph) DeclareUnique(name, label, prop string) error {
 	return mapErr(err)
 }
 
-// DropUnique removes a stored UNIQUE constraint. A missing name leaves the catalog unchanged.
-func (g *Graph) DropUnique(name string) error {
+// DropUnique removes a stored UNIQUE constraint.
+// It reports whether a constraint of that name was stored.
+// A missing name leaves the catalog unchanged.
+func (g *Graph) DropUnique(name string) (bool, error) {
+	var removed bool
 	err := g.write(func(tx storage.Tx) error {
-		return graphstore.DropUnique(tx, name)
+		var err error
+		removed, err = graphstore.DropUnique(tx, name)
+		return err
 	})
-	return mapErr(err)
+	return removed, mapErr(err)
 }
 
 // prepareUniques rejects two live values of a UNIQUE property and writes the
