@@ -120,7 +120,7 @@ func TestMutation(t *testing.T) {
 		t.Fatalf("labels %v", node.Labels())
 	}
 
-	_, _, err := Run(context.Background(), g, `MATCH (a:Admin) DELETE a`, Options{})
+	_, err := Run(context.Background(), g, `MATCH (a:Admin) DELETE a`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation {
 		t.Fatalf("delete %v", err)
 	}
@@ -149,14 +149,14 @@ func TestMutation(t *testing.T) {
 
 func TestBudgetCancelAndHops(t *testing.T) {
 	g := graph.New()
-	_, _, err := Run(context.Background(), g, `UNWIND [1, 2, 3] AS x RETURN x ORDER BY x`, Options{Budget: 1})
+	_, err := Run(context.Background(), g, `UNWIND [1, 2, 3] AS x RETURN x ORDER BY x`, Options{Budget: 1})
 	if gerr.CodeOf(err) != gerr.ResourceExhausted {
 		t.Fatalf("budget %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _, err = Run(ctx, g, `RETURN 1`, Options{})
+	_, err = Run(ctx, g, `RETURN 1`, Options{})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel %v", err)
 	}
@@ -170,7 +170,7 @@ func TestBudgetCancelAndHops(t *testing.T) {
 			}
 		}
 	}
-	_, _, err = Run(context.Background(), g, `MATCH (a)-[*]->(b) RETURN b`, Options{MaxHops: 3})
+	_, err = Run(context.Background(), g, `MATCH (a)-[*]->(b) RETURN b`, Options{MaxHops: 3})
 	if gerr.CodeOf(err) != gerr.ResourceExhausted {
 		t.Fatalf("hops %v", err)
 	}
@@ -186,7 +186,7 @@ func TestParamsAndReadOnly(t *testing.T) {
 		t.Fatalf("param %#v", rows)
 	}
 	mustRun(t, g, `BEGIN READ ONLY`, Options{})
-	_, _, err := Run(context.Background(), g, `CREATE (a:Person)`, Options{})
+	_, err := Run(context.Background(), g, `CREATE (a:Person)`, Options{})
 	if gerr.CodeOf(err) != gerr.InvalidArgument {
 		t.Fatalf("readonly %v", err)
 	}
@@ -194,11 +194,11 @@ func TestParamsAndReadOnly(t *testing.T) {
 
 func mustRun(t *testing.T, g *graph.Graph, src string, opt Options) ([]string, [][]value.Value) {
 	t.Helper()
-	cols, rows, err := Run(context.Background(), g, src, opt)
+	res, err := Run(context.Background(), g, src, opt)
 	if err != nil {
 		t.Fatalf("%s: %v", src, err)
 	}
-	return cols, rows
+	return res.Columns, res.All()
 }
 
 func str(v value.Value) string {
@@ -226,7 +226,7 @@ func sawNull(rows [][]value.Value) bool {
 
 func TestStatementAtomicity(t *testing.T) {
 	g := graph.New()
-	_, _, err := Run(context.Background(), g, `
+	_, err := Run(context.Background(), g, `
 		CREATE (a:Person {name: "A"})-[:KNOWS]->(b:Person);
 		CREATE (c:Person)-[:KNOWS]->(d:Person) DELETE c;
 		CREATE (e:Person {name: "E"})
@@ -248,7 +248,7 @@ func TestStatementAtomicity(t *testing.T) {
 	g = graph.New()
 	mustRun(t, g, `BEGIN`, Options{})
 	mustRun(t, g, `CREATE (a:Person {name: "A"})`, Options{})
-	_, _, err = Run(context.Background(), g, `CREATE (b:Person)-[:KNOWS]->(c:Person) DELETE b`, Options{})
+	_, err = Run(context.Background(), g, `CREATE (b:Person)-[:KNOWS]->(c:Person) DELETE b`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation {
 		t.Fatalf("inner %v", err)
 	}
@@ -266,7 +266,7 @@ func TestStatementAtomicity(t *testing.T) {
 
 	g = graph.New()
 	mustRun(t, g, `CREATE (a:Person {name: "Ada", city: "Paris"})`, Options{})
-	_, _, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) SET a.name = null CREATE (b)-[:KNOWS]->(c) DELETE b`, Options{})
+	_, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) SET a.name = null CREATE (b)-[:KNOWS]->(c) DELETE b`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation {
 		t.Fatalf("set rollback %v", err)
 	}
@@ -297,7 +297,7 @@ func TestStatementAtomicity(t *testing.T) {
 	}
 
 	mustRun(t, g, `BEGIN READ ONLY`, Options{})
-	_, _, err = Run(context.Background(), g, `CREATE (a:Person)`, Options{})
+	_, err = Run(context.Background(), g, `CREATE (a:Person)`, Options{})
 	if gerr.CodeOf(err) != gerr.InvalidArgument || !g.InTransaction() {
 		t.Fatalf("readonly %v open=%v", err, g.InTransaction())
 	}
@@ -308,7 +308,7 @@ func TestUniqueAtCommit(t *testing.T) {
 	g := graph.New()
 	mustRun(t, g, `CREATE (a:Person {email: "a@b.c"})`, Options{})
 	mustRun(t, g, `CREATE (b:Person {email: "a@b.c"})`, Options{})
-	_, _, err := Run(context.Background(), g, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
+	_, err := Run(context.Background(), g, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation || g.Stats().Nodes != 2 {
 		t.Fatalf("existing dup %v nodes %d", err, g.Stats().Nodes)
 	}
@@ -319,7 +319,7 @@ func TestUniqueAtCommit(t *testing.T) {
 	mustRun(t, g, `BEGIN`, Options{})
 	mustRun(t, g, `CREATE (a:Person {email: "a@b.c"})`, Options{})
 	mustRun(t, g, `CREATE (b:Person {email: "a@b.c"})`, Options{})
-	_, _, err = Run(context.Background(), g, `COMMIT`, Options{})
+	_, err = Run(context.Background(), g, `COMMIT`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation || !g.InTransaction() {
 		t.Fatalf("same tx %v open=%v", err, g.InTransaction())
 	}
@@ -342,7 +342,7 @@ func TestUniqueAtCommit(t *testing.T) {
 	mustRun(t, g1, `MERGE (a:Person {name: "Ada"}) ON CREATE SET a.email = "a@b.c"`, Options{})
 	mustRun(t, g2, `MERGE (a:Person {name: "Ada"}) ON CREATE SET a.email = "a@b.c"`, Options{})
 	mustRun(t, g1, `COMMIT`, Options{})
-	_, _, err = Run(context.Background(), g2, `COMMIT`, Options{})
+	_, err = Run(context.Background(), g2, `COMMIT`, Options{})
 	if gerr.CodeOf(err) != gerr.ConstraintViolation || !g2.InTransaction() {
 		t.Fatalf("second commit %v open=%v", err, g2.InTransaction())
 	}
@@ -351,5 +351,130 @@ func TestUniqueAtCommit(t *testing.T) {
 	_, rows := mustRun(t, got, `MATCH (a:Person) RETURN a.email AS email`, Options{})
 	if len(rows) != 1 || str(rows[0][0]) != "a@b.c" {
 		t.Fatalf("winner %#v", rows)
+	}
+}
+
+func TestExplainProfileAndSummary(t *testing.T) {
+	g := graph.New()
+	explain := `EXPLAIN MATCH (a:Person {name: "Alice"}) RETURN a.name AS name`
+	wantPlan := "Project(a.name AS name)\n  IndexSeek((a:Person {name: \"Alice\"}))\n"
+	res, err := Run(context.Background(), g, explain, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Columns) != 1 || res.Columns[0] != "plan" || len(res.All()) != 1 || str(res.All()[0][0]) != wantPlan {
+		t.Fatalf("explain %#v %q", res.Columns, res.All())
+	}
+	if res.Summary != (Summary{}) || len(res.Profile) != 0 || len(res.Notifications) != 0 || g.Stats().Nodes != 0 {
+		t.Fatalf("explain effects %+v profile %d nodes %d", res.Summary, len(res.Profile), g.Stats().Nodes)
+	}
+	again, err := Run(context.Background(), g, explain, Options{})
+	if err != nil || str(again.All()[0][0]) != wantPlan {
+		t.Fatalf("unstable %v %q", err, again.All())
+	}
+	before := g.Stats().Nodes
+	if _, err := Run(context.Background(), g, `EXPLAIN CREATE (a:Person {name: "Z"})`, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	if g.Stats().Nodes != before {
+		t.Fatalf("explain created a node")
+	}
+
+	g.AddNode("Person", map[string]any{"name": "Alice"})
+	res, err = Run(context.Background(), g, `PROFILE MATCH (a:Person {name: "Alice"}) RETURN a.name AS name`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Columns) != 1 || res.Columns[0] != "name" || len(res.All()) != 1 || str(res.All()[0][0]) != "Alice" {
+		t.Fatalf("profile rows %#v %v", res.Columns, res.All())
+	}
+	if len(res.Profile) != 2 {
+		t.Fatalf("ops %+v", res.Profile)
+	}
+	root, seek := res.Profile[0], res.Profile[1]
+	if root.Text != "Project(a.name AS name)" || root.Depth != 0 || root.Rows != 1 || root.DBHits != 1 {
+		t.Fatalf("project %+v", root)
+	}
+	if seek.Text != `IndexSeek((a:Person {name: "Alice"}))` || seek.Depth != 1 || seek.Rows != 1 || seek.DBHits != 3 {
+		t.Fatalf("seek %+v", seek)
+	}
+	if root.Time < seek.Time || root.Time < 0 || seek.Time < 0 {
+		t.Fatalf("time %s %s", root.Time, seek.Time)
+	}
+
+	res, err = Run(context.Background(), g, `CREATE (a:Person {name: "Ada"})-[:KNOWS]->(b:Person {name: "Bea"}) RETURN a.name`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != (Summary{NodesCreated: 2, EdgesCreated: 1, PropertiesSet: 2, LabelsAdded: 2}) {
+		t.Fatalf("create %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) SET a.name = "Ada", a:Person, a:Admin`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != (Summary{PropertiesSet: 1, LabelsAdded: 1}) {
+		t.Fatalf("set %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `MATCH (a:Admin) REMOVE a:Missing, a:Admin`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != (Summary{LabelsRemoved: 1}) {
+		t.Fatalf("remove %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) SET a.missing = null`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != (Summary{}) {
+		t.Fatalf("null set %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `MATCH (a {name: "Ada"}) DETACH DELETE a`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary != (Summary{NodesDeleted: 1, EdgesDeleted: 1}) {
+		t.Fatalf("detach %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `CREATE (a:Person {name: "C"}) DELETE a, a`, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Summary.NodesCreated != 1 || res.Summary.NodesDeleted != 1 || res.Summary.LabelsAdded != 1 || res.Summary.PropertiesSet != 1 {
+		t.Fatalf("double delete %+v", res.Summary)
+	}
+	res, err = Run(context.Background(), g, `CREATE CONSTRAINT person_email_unique FOR (n:Person) REQUIRE n.email IS UNIQUE`, Options{})
+	if err != nil || res.Summary.ConstraintsAdded != 1 {
+		t.Fatalf("constraint %v %+v", err, res)
+	}
+	res, err = Run(context.Background(), g, `DROP CONSTRAINT person_email_unique`, Options{})
+	if err != nil || res.Summary.ConstraintsRemoved != 1 {
+		t.Fatalf("drop %v %+v", err, res.Summary)
+	}
+	res, err = Run(context.Background(), g, `DROP CONSTRAINT missing_name`, Options{})
+	if err != nil || res.Summary.ConstraintsRemoved != 0 {
+		t.Fatalf("missing drop %v %+v", err, res.Summary)
+	}
+
+	res, err = Run(context.Background(), g, `RETURN 1 AS n UNION ALL RETURN 2 AS n`, Options{
+		Notifications: []Notification{{Code: DeprecatedSyntax, Message: "legacy create"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	row, ok := res.Next()
+	if !ok || !value.Equal(row[0], value.Int(1)) {
+		t.Fatalf("first %v %v", row, ok)
+	}
+	row, ok = res.Next()
+	if !ok || !value.Equal(row[0], value.Int(2)) {
+		t.Fatalf("second %v %v", row, ok)
+	}
+	if _, ok = res.Next(); ok {
+		t.Fatal("extra row")
+	}
+	if len(res.Notifications) != 1 || res.Notifications[0].Code != DeprecatedSyntax {
+		t.Fatalf("note %+v", res.Notifications)
 	}
 }

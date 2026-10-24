@@ -2,7 +2,9 @@
 // Each operator yields one row at a time. Sort, aggregate, and distinct
 // count their buffered rows against the per-query memory budget.
 // Each statement is atomic inside the open transaction. In auto-commit the
-// statement has a transaction of its own. The shell still uses the legacy line language.
+// statement has a transaction of its own. EXPLAIN returns the plan text.
+// PROFILE runs the query and records rows, time, and db hits per operator.
+// The shell still uses the legacy line language.
 package exec
 
 import (
@@ -25,113 +27,129 @@ const (
 
 // Options configures one execution.
 // A zero Budget selects 8 MiB. A zero MaxHops selects 128.
+// Notifications are copied onto every statement result.
 type Options struct {
-	Params  map[string]value.Value
-	Budget  int64
-	MaxHops int
-	Now     func() value.Value
-	Rand    func() float64
+	Params        map[string]value.Value
+	Budget        int64
+	MaxHops       int
+	Now           func() value.Value
+	Rand          func() float64
+	Notifications []Notification
 }
 
 // Run plans src and pulls every operator to completion.
-// It returns the columns and rows of the last statement.
-// A writing statement with no RETURN yields no rows.
+// It returns the result of the last statement.
+// A writing statement with no RETURN yields no rows and a summary.
 // A failed statement drops its own writes. An explicit transaction stays open.
 // In auto-commit the statement's transaction is rolled back, and earlier
 // statements in the script stay committed. An error stops the script.
-// EXPLAIN and PROFILE are not executed.
-func Run(ctx context.Context, g *graph.Graph, src string, opt Options) ([]string, [][]value.Value, error) {
+// EXPLAIN returns the plan text and does not run the query.
+// PROFILE runs the query and fills Result.Profile.
+func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (*Result, error) {
 	if g == nil {
-		return nil, nil, gerr.New(gerr.InvalidArgument, "no graph")
+		return nil, gerr.New(gerr.InvalidArgument, "no graph")
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	script, err := parser.Parse(src)
 	if err != nil {
-		return nil, nil, err
-	}
-	if script != nil {
-		for _, st := range script.Stmts {
-			switch st.(type) {
-			case *ast.Explain, *ast.Profile:
-				return nil, nil, gerr.New(gerr.InvalidArgument, "EXPLAIN does not execute")
-			}
-		}
+		return nil, err
 	}
 	p, err := plan.Build(src)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	eng := newEngine(g, opt)
 	if err := eng.refresh(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	var stmts []ast.Stmt
 	if script != nil {
 		stmts = script.Stmts
 	}
 	if len(stmts) != len(p.Stmts) {
-		return nil, nil, gerr.New(gerr.Internal, "plan does not match the script")
+		return nil, gerr.New(gerr.Internal, "plan does not match the script")
 	}
-	var cols []string
-	var rows [][]value.Value
+	res := &Result{}
 	for i, st := range p.Stmts {
-		cols, rows, err = eng.runStmt(ctx, stmts[i], st)
+		res, err = eng.runStmt(ctx, stmts[i], st)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 	}
-	return cols, rows, nil
+	return res, nil
 }
 
-func (e *engine) runStmt(ctx context.Context, st ast.Stmt, op plan.Op) ([]string, [][]value.Value, error) {
+func (e *engine) runStmt(ctx context.Context, st ast.Stmt, op plan.Op) (*Result, error) {
+	e.sum = Summary{}
+	e.profile = false
+	e.ops = nil
+	e.seen = nil
+	e.cur = nil
 	if txnControl(st) {
 		return e.runOp(ctx, op)
 	}
 	if e.g.InTransaction() {
 		mark, err := e.g.Mark()
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		cols, rows, err := e.runBody(ctx, st, op)
+		res, err := e.runBody(ctx, st, op)
 		if err != nil {
 			if rb := e.g.RollbackTo(mark); rb != nil {
-				return nil, nil, rb
+				return nil, rb
 			}
-			return nil, nil, err
+			return nil, err
 		}
-		return cols, rows, nil
+		return res, nil
 	}
 	if err := e.g.Begin(false); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	cols, rows, err := e.runBody(ctx, st, op)
+	res, err := e.runBody(ctx, st, op)
 	if err != nil {
 		_ = e.g.Rollback()
-		return nil, nil, err
+		return nil, err
 	}
 	if err := e.g.Commit(); err != nil {
 		_ = e.g.Rollback()
-		return nil, nil, err
+		return nil, err
 	}
-	return cols, rows, nil
+	return res, nil
 }
 
-func (e *engine) runBody(ctx context.Context, st ast.Stmt, op plan.Op) ([]string, [][]value.Value, error) {
-	if c, ok := st.(*ast.CreateConstraint); ok && nodeUnique(c) {
-		if err := e.g.DeclareUnique(c.Name, c.For.On, c.Prop); err != nil {
-			return nil, nil, err
+func (e *engine) runBody(ctx context.Context, st ast.Stmt, op plan.Op) (*Result, error) {
+	switch s := st.(type) {
+	case *ast.Explain:
+		return e.explain(op), nil
+	case *ast.Profile:
+		e.profile = true
+		return e.runOp(ctx, op)
+	case *ast.CreateConstraint:
+		if nodeUnique(s) {
+			if err := e.g.DeclareUnique(s.Name, s.For.On, s.Prop); err != nil {
+				return nil, err
+			}
+			e.sum.ConstraintsAdded++
+			return e.result(nil, nil), nil
 		}
-		return nil, nil, nil
-	}
-	if d, ok := st.(*ast.DropConstraint); ok {
-		if err := e.g.DropUnique(d.Name); err != nil {
-			return nil, nil, err
+	case *ast.DropConstraint:
+		removed, err := e.g.DropUnique(s.Name)
+		if err != nil {
+			return nil, err
 		}
-		return nil, nil, nil
+		if removed {
+			e.sum.ConstraintsRemoved++
+		}
+		return e.result(nil, nil), nil
 	}
 	return e.runOp(ctx, op)
+}
+
+func (e *engine) explain(op plan.Op) *Result {
+	text := plan.Format(op)
+	return e.result([]string{"plan"}, [][]value.Value{{value.String(text)}})
 }
 
 func txnControl(st ast.Stmt) bool {
@@ -148,13 +166,19 @@ func nodeUnique(c *ast.CreateConstraint) bool {
 }
 
 type engine struct {
-	g      *graph.Graph
-	view   *graphView
-	params map[string]value.Value
-	mem    *budget
-	hops   int
-	now    func() value.Value
-	rand   func() float64
+	g       *graph.Graph
+	view    *graphView
+	params  map[string]value.Value
+	mem     *budget
+	hops    int
+	now     func() value.Value
+	rand    func() float64
+	notes   []Notification
+	sum     Summary
+	profile bool
+	ops     []*Operator
+	seen    map[plan.Op]*Operator
+	cur     *Operator
 }
 
 func newEngine(g *graph.Graph, opt Options) *engine {
@@ -173,21 +197,25 @@ func newEngine(g *graph.Graph, opt Options) *engine {
 		hops:   hops,
 		now:    opt.Now,
 		rand:   opt.Rand,
+		notes:  append([]Notification(nil), opt.Notifications...),
 	}
 }
 
-func (e *engine) runOp(ctx context.Context, op plan.Op) ([]string, [][]value.Value, error) {
+func (e *engine) runOp(ctx context.Context, op plan.Op) (*Result, error) {
+	if e.profile {
+		e.indexPlan(op, 0)
+	}
 	it := e.open(op, blank())
 	cols := outputCols(op)
 	keep := yields(op)
 	var rows [][]value.Value
 	for {
 		if err := ctx.Err(); err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		r, ok, err := it.Next(ctx)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
 		if !ok {
 			break
@@ -197,9 +225,29 @@ func (e *engine) runOp(ctx context.Context, op plan.Op) ([]string, [][]value.Val
 		}
 	}
 	if !keep {
-		return nil, nil, nil
+		return e.result(nil, nil), nil
 	}
-	return cols, rows, nil
+	return e.result(cols, rows), nil
+}
+
+func (e *engine) result(cols []string, rows [][]value.Value) *Result {
+	res := &Result{
+		Columns:       cols,
+		rows:          rows,
+		Summary:       e.sum,
+		Notifications: append([]Notification(nil), e.notes...),
+	}
+	if e.profile {
+		res.Profile = make([]Operator, len(e.ops))
+		for i, op := range e.ops {
+			res.Profile[i] = *op
+		}
+	}
+	e.sum = Summary{}
+	e.ops = nil
+	e.seen = nil
+	e.cur = nil
+	return res
 }
 
 func (e *engine) env(r row) *expr.Env {
@@ -211,17 +259,22 @@ func (e *engine) env(r row) *expr.Env {
 }
 
 func (e *engine) refresh() error {
+	nodes := e.g.AllNodes()
+	e.hit(int64(len(nodes)))
+	edgesIn := e.g.AllEdges()
+	e.hit(int64(len(edgesIn)))
 	v := &graphView{
+		eng:   e,
 		nodes: map[uint64]expr.NodeRec{},
 		edges: map[uint64]expr.EdgeRec{},
 		out:   map[uint64][]expr.EdgeRec{},
 		in:    map[uint64][]expr.EdgeRec{},
 	}
-	for _, n := range e.g.AllNodes() {
+	for _, n := range nodes {
 		v.nodes[n.ID] = expr.NodeRec{ID: n.ID, Labels: n.Labels(), Props: n.Properties()}
 	}
 	var edges []expr.EdgeRec
-	for _, ed := range e.g.AllEdges() {
+	for _, ed := range edgesIn {
 		edges = append(edges, expr.EdgeRec{
 			ID: ed.ID, From: ed.From, To: ed.To, Type: ed.Label, Props: ed.Properties(),
 		})
@@ -244,6 +297,7 @@ func (e *engine) refresh() error {
 }
 
 type graphView struct {
+	eng   *engine
 	nodes map[uint64]expr.NodeRec
 	edges map[uint64]expr.EdgeRec
 	out   map[uint64][]expr.EdgeRec
@@ -254,6 +308,7 @@ func (v *graphView) Node(id uint64) (expr.NodeRec, bool) {
 	if v == nil {
 		return expr.NodeRec{}, false
 	}
+	v.eng.hit(1)
 	n, ok := v.nodes[id]
 	return n, ok
 }
@@ -262,14 +317,16 @@ func (v *graphView) Edge(id uint64) (expr.EdgeRec, bool) {
 	if v == nil {
 		return expr.EdgeRec{}, false
 	}
-	e, ok := v.edges[id]
-	return e, ok
+	v.eng.hit(1)
+	ed, ok := v.edges[id]
+	return ed, ok
 }
 
 func (v *graphView) Out(id uint64) []expr.EdgeRec {
 	if v == nil {
 		return nil
 	}
+	v.eng.hit(1)
 	return append([]expr.EdgeRec(nil), v.out[id]...)
 }
 
@@ -277,6 +334,7 @@ func (v *graphView) In(id uint64) []expr.EdgeRec {
 	if v == nil {
 		return nil
 	}
+	v.eng.hit(1)
 	return append([]expr.EdgeRec(nil), v.in[id]...)
 }
 

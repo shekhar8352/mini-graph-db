@@ -13,7 +13,7 @@ import (
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
-func (e *engine) open(op plan.Op, seed row) iterator {
+func (e *engine) openPlan(op plan.Op, seed row) iterator {
 	if op == nil {
 		return &unitIter{row: seed}
 	}
