@@ -4,6 +4,34 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.11 — Query result (2026-10-23)
+
+- **4.11** `Run` returns `exec.Result` for the last statement. The result carries column names, rows of `value.Value`, a summary, and notifications. `Next` walks the rows after the statement has finished.
+- The summary counts nodes and edges created and deleted, properties set, labels added and removed, and constraints added and removed. Setting a property counts when the new value equals the old one. A label the node already has does not count. A missing label removal does not count. `DeprecatedSyntax` is the notification code a legacy rewrite attaches. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. The result fields follow the summary already in the spec. |
+| P12 Testing | Summary counters, `Next`, and a `DeprecatedSyntax` notice run under `go test -race`. |
+| P13 Documentation | The architecture note, the README, and this changelog describe the result. The shell still runs the legacy line language. |
+| P1–P9, P11 | No change to the page format, the log format, or the shell. |
+
+### Phase 4.10 — EXPLAIN and PROFILE (2026-10-23)
+
+- **4.10** `EXPLAIN` returns one column, `plan`, and does not run the query. The cell is the stable plan text. `PROFILE` runs the query and returns its columns. Each operator records the rows it yielded, the time spent in its `Next` calls, and db hits.
+- A db hit is one node read, one edge read, or one adjacency-list read charged to the operator whose `Next` is active. The shell still runs the legacy line language.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P10 Change management | Grammar version stays 1. `EXPLAIN` text is the plan printer output. |
+| P12 Testing | A repeated `EXPLAIN` matches the plan printer. `PROFILE` checks rows and db hits under `go test -race`. |
+| P13 Documentation | The architecture note, the README, and this changelog describe `EXPLAIN` and `PROFILE`. The shell still runs the legacy line language. |
+| P1–P9, P11 | No change to the page format, the log format, or the shell. |
+
 ### Phase 4.9 — Mutation atomicity (2026-10-22)
 
 - **4.9** A write statement is one unit inside the open transaction. An error drops that statement's writes. An explicit transaction stays open, and earlier statements in it remain. In auto-commit the statement's transaction is rolled back. An error stops the script; statements that already committed stay committed.
