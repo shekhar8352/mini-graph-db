@@ -224,19 +224,23 @@ func (e *engine) writeNode(r row, n *ast.NodePat) (row, uint64, error) {
 		return row{}, 0, err
 	}
 	labels := flatten(n.Labels)
+	stored := stripNull(props)
 	if n.Name != "" {
 		if v, ok := r.val[n.Name]; ok {
 			id, ok := v.NodeID()
 			if !ok {
 				return row{}, 0, gerr.New(gerr.InvalidArgument, "bound name is not a node")
 			}
-			if _, ok := e.g.GetNode(id); !ok {
+			node, exists := e.g.GetNode(id)
+			e.hit(1)
+			if !exists {
 				return row{}, 0, gerr.New(gerr.InvalidArgument, "node does not exist")
 			}
 			if len(labels) > 0 {
 				if _, err := e.g.AddLabels(id, labels); err != nil {
 					return row{}, 0, err
 				}
+				e.sum.LabelsAdded += newLabels(node, labels)
 			}
 			if err := e.mergeProps(id, true, props); err != nil {
 				return row{}, 0, err
@@ -244,10 +248,13 @@ func (e *engine) writeNode(r row, n *ast.NodePat) (row, uint64, error) {
 			return r, id, nil
 		}
 	}
-	node, err := e.g.CreateNode(labels, stripNull(props))
+	node, err := e.g.CreateNode(labels, stored)
 	if err != nil {
 		return row{}, 0, err
 	}
+	e.sum.NodesCreated++
+	e.sum.LabelsAdded += len(labels)
+	e.sum.PropertiesSet += len(stored)
 	if n.Name != "" {
 		r.val[n.Name] = value.NodeRef(node.ID)
 	}
@@ -259,6 +266,7 @@ func (e *engine) writeEdge(r row, rel *ast.RelPat, left, right uint64) (row, uin
 	if err != nil {
 		return row{}, 0, err
 	}
+	stored := stripNull(props)
 	from, to := left, right
 	if rel.Dir == ast.DirIn {
 		from, to = right, left
@@ -267,10 +275,12 @@ func (e *engine) writeEdge(r row, rel *ast.RelPat, left, right uint64) (row, uin
 	if len(rel.Types) > 0 {
 		typ = rel.Types[0]
 	}
-	ed, err := e.g.CreateEdge(from, to, typ, stripNull(props))
+	ed, err := e.g.CreateEdge(from, to, typ, stored)
 	if err != nil {
 		return row{}, 0, err
 	}
+	e.sum.EdgesCreated++
+	e.sum.PropertiesSet += len(stored)
 	if rel.Name != "" {
 		r.val[rel.Name] = value.EdgeRef(ed.ID)
 	}
@@ -515,8 +525,14 @@ func (e *engine) applyItem(r row, it *ast.SetItem) error {
 		if err != nil {
 			return err
 		}
-		_, err = e.g.AddLabels(id, flatten(it.Labels))
-		return err
+		node, _ := e.g.GetNode(id)
+		e.hit(1)
+		labels := flatten(it.Labels)
+		if _, err = e.g.AddLabels(id, labels); err != nil {
+			return err
+		}
+		e.sum.LabelsAdded += newLabels(node, labels)
+		return nil
 	}
 	id, node, err := e.entity(r, it.Name)
 	if err != nil {
@@ -578,9 +594,13 @@ func (e *engine) removeItems(r row, items []*ast.RemoveItem) error {
 		if err != nil {
 			return err
 		}
-		if _, err := e.g.RemoveLabels(id, flatten(it.Labels)); err != nil {
+		node, _ := e.g.GetNode(id)
+		e.hit(1)
+		labels := flatten(it.Labels)
+		if _, err := e.g.RemoveLabels(id, labels); err != nil {
 			return err
 		}
+		e.sum.LabelsRemoved += heldLabels(node, labels)
 	}
 	return nil
 }
@@ -590,23 +610,39 @@ func (e *engine) deleteOne(v value.Value, detach bool) error {
 		return nil
 	}
 	if id, ok := v.NodeID(); ok {
-		if _, exists := e.g.GetNode(id); !exists {
+		_, exists := e.g.GetNode(id)
+		e.hit(1)
+		if !exists {
 			return nil
 		}
 		ids, err := e.g.IncidentEdges(id)
+		e.hit(1)
 		if err != nil {
 			return err
 		}
 		if len(ids) > 0 && !detach {
 			return gerr.New(gerr.ConstraintViolation, "node has edges")
 		}
-		return e.g.DeleteNode(id)
+		if err := e.g.DeleteNode(id); err != nil {
+			return err
+		}
+		if detach {
+			e.sum.EdgesDeleted += uniqueIDs(ids)
+		}
+		e.sum.NodesDeleted++
+		return nil
 	}
 	if id, ok := v.EdgeID(); ok {
-		if _, exists := e.g.GetEdge(id); !exists {
+		_, exists := e.g.GetEdge(id)
+		e.hit(1)
+		if !exists {
 			return nil
 		}
-		return e.g.DeleteEdge(id)
+		if err := e.g.DeleteEdge(id); err != nil {
+			return err
+		}
+		e.sum.EdgesDeleted++
+		return nil
 	}
 	return gerr.New(gerr.InvalidArgument, "DELETE expects a node or an edge")
 }
@@ -655,20 +691,26 @@ func (e *engine) mergeProps(id uint64, node bool, props map[string]value.Value) 
 		return nil
 	}
 	if node {
-		_, err := e.g.UpdateNodeValues(id, set)
+		if _, err := e.g.UpdateNodeValues(id, set); err != nil {
+			return err
+		}
+	} else if _, err := e.g.UpdateEdgeValues(id, set); err != nil {
 		return err
 	}
-	_, err := e.g.UpdateEdgeValues(id, set)
-	return err
+	e.sum.PropertiesSet += len(set)
+	return nil
 }
 
 func (e *engine) replaceProps(id uint64, node bool, props map[string]value.Value) error {
 	if node {
-		_, err := e.g.ReplaceNodeProps(id, props)
+		if _, err := e.g.ReplaceNodeProps(id, props); err != nil {
+			return err
+		}
+	} else if _, err := e.g.ReplaceEdgeProps(id, props); err != nil {
 		return err
 	}
-	_, err := e.g.ReplaceEdgeProps(id, props)
-	return err
+	e.sum.PropertiesSet += len(props)
+	return nil
 }
 
 func (e *engine) dropProps(id uint64, node bool, names []string) error {
@@ -760,6 +802,39 @@ func (e *engine) callRows(detail string, seed row) ([]row, error) {
 		rows[i] = out
 	}
 	return rows, nil
+}
+
+type labelSet interface {
+	HasLabel(string) bool
+}
+
+func newLabels(n labelSet, labels []string) int {
+	added := 0
+	for _, l := range labels {
+		if n != nil && n.HasLabel(l) {
+			continue
+		}
+		added++
+	}
+	return added
+}
+
+func heldLabels(n labelSet, labels []string) int {
+	held := 0
+	for _, l := range labels {
+		if n != nil && n.HasLabel(l) {
+			held++
+		}
+	}
+	return held
+}
+
+func uniqueIDs(ids []uint64) int {
+	seen := map[uint64]struct{}{}
+	for _, id := range ids {
+		seen[id] = struct{}{}
+	}
+	return len(seen)
 }
 
 func flatten(groups [][]string) []string {
