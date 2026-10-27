@@ -4,6 +4,22 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 4.12–4.14 — Shell, goldens, and fuzz (2026-10-27)
+
+- **4.12** The shell compiles each line with `internal/compat/legacy` and runs it through `exec.Run`. A GQL-lite line is executed as written. A legacy line is rewritten to the table in the spec and carries a `DeprecatedSyntax` notice. `HELP` and `EXIT` stay shell commands. `SAVE` and `LOAD` still fail with the message: use `graphdb backup`.
+- **4.13** `test/queries` has 235 `.gql` / `.out` pairs. The suite opens a fresh memory engine and a fresh disk engine for each case (`-engine=memory|disk|both`).
+- **4.14** `exec.Run` recovers a panic as `Internal`. `FuzzRun` and `test/fuzz` reject an error that has no code. `range` of more than 1 048 576 values is `ResourceExhausted`.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P9 Resource governance | `range` stops at 2^20 elements with `ResourceExhausted`. Sort, aggregate, and distinct still honor the query memory budget. |
+| P10 Change management | Grammar version stays 1. The rewrite table is the one already in the spec. |
+| P12 Testing | Rewrite table, REPL compat, 235 goldens on both engines, and fuzz seeds run under `go test -race`. |
+| P13 Documentation | The architecture note, the README, and this changelog describe the shell switch. |
+| P1–P8, P11 | No change to the page format or the log format. |
+
 ### Phase 4.11 — Query result (2026-10-23)
 
 - **4.11** `Run` returns `exec.Result` for the last statement. The result carries column names, rows of `value.Value`, a summary, and notifications. `Next` walks the rows after the statement has finished.

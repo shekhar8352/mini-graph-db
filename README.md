@@ -1,6 +1,6 @@
 # mini-graph-db
 
-An embedded, in-memory **property-graph database** written in Go. It stores labeled nodes and directed labeled edges, each with key-value properties, and is driven by an interactive REPL and a small line-based query language (not full Cypher).
+An embedded, in-memory **property-graph database** written in Go. It stores labeled nodes and directed labeled edges, each with key-value properties, and is driven by an interactive REPL. The shell runs GQL-lite (grammar version 1) and still accepts the older line language by rewriting it.
 
 The shell keeps the working set in RAM for one session. A durable database is a directory opened with `OpenEngine`. `graphdb migrate` loads an old gob snapshot into that directory.
 
@@ -42,8 +42,8 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
                                       │ one line
                                       ▼
                     ┌─────────────────────────────────────┐
-                    │           internal/query            │
-                    │  lexer → parser → AST → executor    │
+                    │  compat/legacy → lang → exec        │
+                    │  GQL-lite, or a rewritten line      │
                     └─────────────────┬───────────────────┘
                                       ▼
                     ┌─────────────────────────────────────┐
@@ -55,12 +55,12 @@ In a real terminal the prompt supports line editing: left/right move the cursor,
 
 Request path for a typical command:
 
-1. The REPL reads a line (`graph> MATCH person WHERE age > 25`).
-2. `query.Parse` lexes tokens and builds an AST (`MatchStmt`).
-3. `query.Executor` calls the graph facade. Without `BEGIN`, the statement is one transaction on the memory engine through the transaction manager (`NodesByLabel` + `WHERE` compare).
-4. The REPL prints a text table (nodes, edges, neighbors, path, or stats).
+1. The REPL reads a line (`graph> MATCH (n:person) WHERE n.age > 25 RETURN n` or the legacy `MATCH person WHERE age > 25`).
+2. `legacy.Compile` accepts GQL-lite as written, or rewrites a legacy line to that AST.
+3. `exec.Run` plans and pulls the statement. Without `BEGIN`, the statement is one transaction on the memory engine through the transaction manager.
+4. The REPL prints a text table of columns and rows, or the familiar `nodes:` / `edges:` / `labels:` block for `SHOW STATS`.
 
-Packages depend inward only: `cmd` → `repl` → `query` → `graph` → (`graphstore`, `txn`) → `storage`. `txn` does not import `graphstore`. `graphdb migrate` also calls `internal/compat/gobimport`, which writes `storage/disk`. There are no third-party dependencies in the engine, the transaction manager, or the parser. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
+Packages depend inward only: `cmd` → `repl` → (`compat/legacy`, `exec`) → `graph` → (`graphstore`, `txn`) → `storage`. `txn` does not import `graphstore`. `graphdb migrate` also calls `internal/compat/gobimport`, which writes `storage/disk`. There are no third-party dependencies in the engine, the transaction manager, or the parser. The REPL uses `github.com/peterh/liner` solely for terminal line editing.
 
 ### Package map
 
@@ -68,7 +68,9 @@ Packages depend inward only: `cmd` → `repl` → `query` → `graph` → (`grap
 |------|------|
 | [`cmd/graphdb`](cmd/graphdb) | Process entry: cobra CLI (`shell`, `migrate`, `version`) |
 | [`internal/repl`](internal/repl/repl.go) | Prompt, history, table-formatted output |
-| [`internal/query`](internal/query) | Lexer, recursive-descent parser, AST, executor |
+| [`internal/compat/legacy`](internal/compat/legacy) | Legacy line-language rewrite into GQL-lite |
+| [`internal/exec`](internal/exec) | GQL-lite executor used by the shell |
+| [`internal/query`](internal/query) | Legacy line parser still used by the rewrite and by `graphdb migrate` |
 | [`internal/value`](internal/value) | Typed values, ordering, key and record encodings |
 | [`internal/storage`](internal/storage) | Key-value engine interface |
 | [`internal/storage/memory`](internal/storage/memory) | In-memory engine (sorted keys per keyspace) |
@@ -128,27 +130,24 @@ Neighbor lookup walks the outgoing adjacency of a node. `MATCH <label>` uses the
 
 ## Query pipeline
 
-Each statement is **one line**. Keywords are case-insensitive (`match`, `MATCH`, and `Match` are the same).
+The shell reads **one line** at a time. A GQL-lite script may still put several statements on that line, separated by `;`. Keywords are case-insensitive (`match`, `MATCH`, and `Match` are the same).
 
 ```
 source line
-    → Lexer     identifiers, numbers, "strings", { } : , - ->  = != > < >= <=
-    → Parser    recursive descent → Stmt (AST)
-    → Executor  graph calls → Result
-    → REPL      tables or a one-line message
+    → compat/legacy   GQL-lite as written, or a rewritten legacy line
+    → lang/parser     GQL-lite AST
+    → lang/plan       logical plan
+    → exec.Run        Volcano iterators → exec.Result
+    → REPL            table of columns and rows
 ```
 
-Lexer tokens include identifiers, integers/floats, quoted strings (`\"`, `\\`, `\n`, `\t`), braces, commas, the edge arrow form `-LABEL->` (minus, identifier, `->`), and comparison operators.
-
-The parser produces typed statements (`CreateNodeStmt`, `MatchEdgeStmt`, `GetNodeStmt`, …). Unknown commands fail at parse time. The executor never re-parses: it switches on the AST.
-
-Each statement auto-commits one transaction unless the session has run `BEGIN`. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. That command is Phase 8. Until then, `graphdb migrate` is how an old snapshot becomes a disk database.
+A rewritten legacy line attaches a `DeprecatedSyntax` notice. `HELP` and `EXIT` are shell commands. `SAVE` and `LOAD` still parse, and the error text is: use `graphdb backup`. That command is Phase 8. Until then, `graphdb migrate` is how an old snapshot becomes a disk database.
 
 ---
 
 ## Query language
 
-The shell still speaks the line language below. The next language, GQL-lite grammar version 1, is specified in [`docs/spec/query-language.md`](docs/spec/query-language.md) and is not executed yet.
+The shell runs GQL-lite grammar version 1, specified in [`docs/spec/query-language.md`](docs/spec/query-language.md). The line language below is still accepted and rewritten to that AST.
 
 ### Values and properties
 
@@ -173,11 +172,11 @@ CREATE NODE <label> {key: value, ...}
 CREATE EDGE <fromId> -<LABEL>-> <toId> {key: value, ...}
 ```
 
-Both endpoints of an edge must already exist. The engine prints the new ID:
+Both endpoints of an edge must already exist. A write with no `RETURN` prints a summary:
 
 ```
-created node 1 label=person
-created edge 1 1 -KNOWS-> 2
+created 1 node
+created 1 edge
 ```
 
 #### Read
@@ -234,28 +233,26 @@ EXIT            # also QUIT
 
 ```
 graph> CREATE NODE person {name: "Alice", age: 30}
-created node 1 label=person
+created 1 node
 graph> CREATE NODE person {name: "Bob", age: 20}
-created node 2 label=person
+created 1 node
 graph> CREATE EDGE 1 -KNOWS-> 2 {since: 2020}
-created edge 1 1 -KNOWS-> 2
+created 1 edge
 graph> GET NODE 1
-ID  LABEL   PROPS
-1   person  age=30 name="Alice"
+n
+1:person {age=30 name="Alice"}
 graph> MATCH person WHERE age > 25
-ID  LABEL   PROPS
-1   person  age=30 name="Alice"
+n
+1:person {age=30 name="Alice"}
 graph> MATCH EDGE KNOWS WHERE since >= 2020
-ID  FROM  TO  LABEL  PROPS
-1   1     2   KNOWS  since=2020
+e
+1 1 -KNOWS-> 2 {since=2020}
 graph> EDGES 1 TO 2
-ID  FROM  TO  LABEL  PROPS
-1   1     2   KNOWS  since=2020
+e
+1 1 -KNOWS-> 2 {since=2020}
 graph> PATH 1 TO 2
-ID  LABEL   PROPS
-1   person  age=30 name="Alice"
-2   person  age=20 name="Bob"
-path 1 -> 2
+shortestPath(a, b)
+path(node(1), edge(1), node(2))
 graph> SHOW STATS
 nodes:  2
 edges:  1
@@ -285,13 +282,9 @@ The snapshot is the old gob file (version 0 or 1). The text WAL is optional quer
 1. Construct an empty in-memory `graph.Graph`.
 2. Read-eval-print until `EXIT` or EOF.
 
-On a TTY, `liner` provides history (persisted to `--history`) and keyword completion (`CREATE NODE`, `MATCH EDGE`, `GET NODE`, …). On a pipe or in tests, `bufio.Scanner` is used so scripts stay deterministic.
+On a TTY, `liner` provides history (persisted to `--history`) and keyword completion (GQL-lite and legacy). On a pipe or in tests, `bufio.Scanner` is used so scripts stay deterministic.
 
-Results are aligned with `text/tabwriter`:
-
-- nodes: `ID LABEL PROPS`
-- edges: `ID FROM TO LABEL PROPS`
-- neighbors: `DEPTH ID LABEL PROPS`
+Results are aligned with `text/tabwriter`. A node or edge cell is expanded from the graph. `SHOW STATS` still prints `nodes:` / `edges:` / `labels:`.
 
 ---
 
@@ -308,7 +301,10 @@ make lint          # golangci-lint
 | `internal/storage/graphstore` | Cascade delete, id allocation, property index |
 | `internal/graph` | CRUD, cascade delete, indexes, export/import, BFS/DFS, shortest path |
 | `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, `BEGIN`/`COMMIT`, SAVE/LOAD rejection |
+| `internal/compat/legacy` | Rewrite table from the spec, then `exec.Run` |
 | `internal/txn` | Snapshot isolation, conflicts, vacuum, concurrent readers, disk reopen |
+| `test/queries` | 235 GQL-lite goldens on the memory engine and the disk engine |
+| `test/fuzz` | Parser and executor fuzz seeds |
 | `test/consistency` | 10000 randomized snapshot-isolation histories |
 | `internal/compat/gobimport` | Gob version 0 and 1, text WAL replay, into a disk directory |
 | `internal/repl` | End-to-end session over a fake stdin |
