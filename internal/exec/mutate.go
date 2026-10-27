@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"sort"
+	"strings"
 
 	"github.com/shekhar8352/mini-graph-db/internal/exec/expr"
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
@@ -747,13 +748,113 @@ func (e *engine) leaf(ctx context.Context, op *plan.Leaf, seed row) ([]row, erro
 	case "Rollback":
 		return nil, e.g.Rollback()
 	case "Vacuum":
-		_, err := e.g.Vacuum(ctx)
-		return nil, err
+		n, err := e.g.Vacuum(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := seed.clone()
+		out.val["reclaimed"] = value.Int(int64(n))
+		return []row{out}, nil
 	case "Call":
 		return e.callRows(op.Detail, seed)
+	case "Show":
+		return e.showRows(op.Detail, seed)
+	case "Analyze", "CreateIndex", "DropIndex":
+		return nil, nil
+	case "Use", "Terminate", "CreateDatabase", "DropDatabase",
+		"CreateUser", "AlterUser", "DropUser", "CreateRole", "DropRole",
+		"GrantRole", "RevokeRole", "Grant", "Revoke", "Deny",
+		"CreateToken", "RevokeToken":
+		return nil, gerr.New(gerr.Unavailable, "not available until a later phase")
 	default:
 		return nil, nil
 	}
+}
+
+func showCols(detail string) []string {
+	switch {
+	case detail == "STATS":
+		return []string{"nodes", "edges", "labels"}
+	case detail == "INDEXES":
+		return []string{"name", "entity", "labelOrType", "properties", "state"}
+	case detail == "CONSTRAINTS":
+		return []string{"name", "entity", "labelOrType", "properties", "state", "kind", "typeName"}
+	case detail == "TRANSACTIONS":
+		return []string{"id", "readOnly", "age"}
+	case strings.HasPrefix(detail, "PRIVILEGES"),
+		detail == "DATABASES", detail == "USERS", detail == "ROLES":
+		return []string{"name"}
+	default:
+		return []string{"name"}
+	}
+}
+
+func (e *engine) showRows(detail string, seed row) ([]row, error) {
+	if strings.HasPrefix(detail, "PRIVILEGES") || detail == "DATABASES" || detail == "USERS" || detail == "ROLES" {
+		return nil, gerr.New(gerr.Unavailable, "not available until a later phase")
+	}
+	if err := e.refresh(); err != nil {
+		return nil, err
+	}
+	switch detail {
+	case "STATS":
+		st := e.g.Stats()
+		sort.Strings(st.Labels)
+		labels := make([]value.Value, len(st.Labels))
+		for i, name := range st.Labels {
+			labels[i] = value.String(name)
+		}
+		out := seed.clone()
+		out.val["nodes"] = value.Int(int64(st.Nodes))
+		out.val["edges"] = value.Int(int64(st.Edges))
+		out.val["labels"] = value.List(labels...)
+		return []row{out}, nil
+	case "LABELS":
+		return nameRows(seed, "name", append([]string(nil), e.g.Stats().Labels...))
+	case "EDGE TYPES":
+		seen := map[string]struct{}{}
+		for _, ed := range e.g.AllEdges() {
+			seen[ed.Label] = struct{}{}
+		}
+		return nameRows(seed, "name", sortedKeys(seen))
+	case "PROPERTY KEYS":
+		seen := map[string]struct{}{}
+		for _, n := range e.g.AllNodes() {
+			for k := range n.Properties() {
+				seen[k] = struct{}{}
+			}
+		}
+		for _, ed := range e.g.AllEdges() {
+			for k := range ed.Properties() {
+				seen[k] = struct{}{}
+			}
+		}
+		return nameRows(seed, "name", sortedKeys(seen))
+	case "INDEXES", "CONSTRAINTS", "TRANSACTIONS":
+		return nil, nil
+	default:
+		return nil, gerr.Newf(gerr.InvalidArgument, "unknown SHOW %s", detail)
+	}
+}
+
+func nameRows(seed row, col string, names []string) ([]row, error) {
+	sort.Strings(names)
+	rows := make([]row, len(names))
+	for i, name := range names {
+		out := seed.clone()
+		out.val[col] = value.String(name)
+		rows[i] = out
+	}
+	return rows, nil
+}
+
+func sortedKeys(seen map[string]struct{}) []string {
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func (e *engine) callRows(detail string, seed row) ([]row, error) {

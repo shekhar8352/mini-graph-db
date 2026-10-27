@@ -4,7 +4,8 @@
 // Each statement is atomic inside the open transaction. In auto-commit the
 // statement has a transaction of its own. EXPLAIN returns the plan text.
 // PROFILE runs the query and records rows, time, and db hits per operator.
-// The shell still uses the legacy line language.
+// A panic in Run becomes Internal. The shell compiles a line with
+// internal/compat/legacy and then calls Run.
 package exec
 
 import (
@@ -45,7 +46,13 @@ type Options struct {
 // statements in the script stay committed. An error stops the script.
 // EXPLAIN returns the plan text and does not run the query.
 // PROFILE runs the query and fills Result.Profile.
-func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (*Result, error) {
+func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (res *Result, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			res = nil
+			err = gerr.Newf(gerr.Internal, "panic: %v", rec)
+		}
+	}()
 	if g == nil {
 		return nil, gerr.New(gerr.InvalidArgument, "no graph")
 	}
@@ -71,7 +78,7 @@ func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (*Result,
 	if len(stmts) != len(p.Stmts) {
 		return nil, gerr.New(gerr.Internal, "plan does not match the script")
 	}
-	res := &Result{}
+	res = &Result{}
 	for i, st := range p.Stmts {
 		res, err = eng.runStmt(ctx, stmts[i], st)
 		if err != nil {
@@ -419,8 +426,13 @@ func outputCols(op plan.Op) []string {
 	case *plan.Union:
 		return outputCols(n.Left)
 	case *plan.Leaf:
-		if n.Name == "Call" {
+		switch n.Name {
+		case "Call":
 			return callCols(n.Detail)
+		case "Show":
+			return showCols(n.Detail)
+		case "Vacuum":
+			return []string{"reclaimed"}
 		}
 	}
 	return nil
@@ -431,7 +443,7 @@ func yields(op plan.Op) bool {
 	case *plan.Project, *plan.Aggregate, *plan.Union:
 		return true
 	case *plan.Leaf:
-		return n.Name == "Call"
+		return n.Name == "Call" || n.Name == "Show" || n.Name == "Vacuum"
 	case *plan.Limit:
 		return yields(n.Input)
 	case *plan.Skip:

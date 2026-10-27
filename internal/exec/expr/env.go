@@ -1,5 +1,5 @@
 // Package expr evaluates GQL-lite expressions and the built-in function library.
-// It does not plan or run a query. The shell still uses the legacy line language.
+// It does not plan or run a query. The shell compiles a line and then calls exec.Run.
 package expr
 
 import (
