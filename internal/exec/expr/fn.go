@@ -9,6 +9,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
@@ -305,7 +306,11 @@ func fnRange(args []value.Value) (value.Value, error) {
 	if (end-start < 0) != (step < 0) && start != end {
 		return value.List(), nil
 	}
-	var out []value.Value
+	n, ov := rangeLen(start, end, step)
+	if ov || n > 1<<20 {
+		return value.Null(), gerr.New(gerr.ResourceExhausted, "range is too large")
+	}
+	out := make([]value.Value, 0, n)
 	for {
 		out = append(out, value.Int(start))
 		if start == end {
@@ -321,6 +326,19 @@ func fnRange(args []value.Value) (value.Value, error) {
 		start = next
 	}
 	return value.List(out...), nil
+}
+
+func rangeLen(start, end, step int64) (int64, bool) {
+	diff, ov := subInt(end, start)
+	if ov {
+		return 0, true
+	}
+	quot := diff / step
+	n, ov := addInt(quot, 1)
+	if ov || n < 0 {
+		return 0, true
+	}
+	return n, false
 }
 
 func fnKeys(v value.Value, env *Env) (value.Value, error) {

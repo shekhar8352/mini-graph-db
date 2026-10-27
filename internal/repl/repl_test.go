@@ -26,7 +26,7 @@ func TestREPLSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := out.String()
-	if !strings.Contains(s, "created node 1") {
+	if !strings.Contains(s, "created 1 node") {
 		t.Fatalf("missing create: %s", s)
 	}
 	if !strings.Contains(s, "Alice") {
@@ -40,6 +40,22 @@ func TestREPLSession(t *testing.T) {
 	}
 	if !strings.Contains(s, "bye") {
 		t.Fatalf("missing exit: %s", s)
+	}
+}
+
+func TestREPLGQLLite(t *testing.T) {
+	in := strings.NewReader(strings.Join([]string{
+		`CREATE (a:Person {name: "Ada"})`,
+		`MATCH (n:Person) RETURN n.name AS name`,
+		`EXIT`,
+	}, "\n") + "\n")
+	var out bytes.Buffer
+	if err := Run(Config{In: in, Out: &out}); err != nil {
+		t.Fatal(err)
+	}
+	s := out.String()
+	if !strings.Contains(s, "Ada") {
+		t.Fatalf("missing gql output: %s", s)
 	}
 }
 

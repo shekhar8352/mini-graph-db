@@ -1,8 +1,11 @@
 // Package repl is the embedded interactive shell.
+// Each line is compiled as GQL-lite, or rewritten from the legacy line
+// language, and then run by the v2 executor.
 package repl
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -14,8 +17,9 @@ import (
 
 	"github.com/peterh/liner"
 
+	"github.com/shekhar8352/mini-graph-db/internal/compat/legacy"
+	"github.com/shekhar8352/mini-graph-db/internal/exec"
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
-	"github.com/shekhar8352/mini-graph-db/internal/query"
 	"github.com/shekhar8352/mini-graph-db/internal/storage/memory"
 	"github.com/shekhar8352/mini-graph-db/internal/txn"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
@@ -44,13 +48,13 @@ func Run(cfg Config) error {
 		return err
 	}
 	defer func() { _ = mgr.Close() }()
-	exec := query.NewExecutor(graph.NewWith(mgr))
+	g := graph.NewWith(mgr)
 
 	fmt.Fprintln(cfg.Out, "mini-graph-db  type HELP for commands")
 	if isTerminal(cfg.In) {
-		return runLineEditor(cfg, exec)
+		return runLineEditor(cfg, g)
 	}
-	return runScanner(cfg, exec)
+	return runScanner(cfg, g)
 }
 
 func isTerminal(in io.Reader) bool {
@@ -61,7 +65,7 @@ func isTerminal(in io.Reader) bool {
 	return liner.TerminalSupported() && f.Fd() == os.Stdin.Fd()
 }
 
-func runLineEditor(cfg Config, exec *query.Executor) error {
+func runLineEditor(cfg Config, g *graph.Graph) error {
 	ed := liner.NewLiner()
 	defer func() { _ = ed.Close() }()
 	ed.SetCtrlCAborts(true)
@@ -100,7 +104,7 @@ func runLineEditor(cfg Config, exec *query.Executor) error {
 				_ = f.Close()
 			}
 		}
-		if err := handleLine(cfg.Out, exec, line); err != nil {
+		if err := handleLine(cfg.Out, g, line); err != nil {
 			if errors.Is(err, errExit) {
 				return nil
 			}
@@ -111,7 +115,7 @@ func runLineEditor(cfg Config, exec *query.Executor) error {
 	return nil
 }
 
-func runScanner(cfg Config, exec *query.Executor) error {
+func runScanner(cfg Config, g *graph.Graph) error {
 	sc := bufio.NewScanner(cfg.In)
 	buf := make([]byte, 0, 64*1024)
 	sc.Buffer(buf, 1024*1024)
@@ -126,7 +130,7 @@ func runScanner(cfg Config, exec *query.Executor) error {
 		if line == "" {
 			continue
 		}
-		if err := handleLine(cfg.Out, exec, line); err != nil {
+		if err := handleLine(cfg.Out, g, line); err != nil {
 			if errors.Is(err, errExit) {
 				return nil
 			}
@@ -137,16 +141,36 @@ func runScanner(cfg Config, exec *query.Executor) error {
 	return sc.Err()
 }
 
-func handleLine(out io.Writer, exec *query.Executor, line string) error {
-	res, err := exec.ExecString(line)
+func handleLine(out io.Writer, g *graph.Graph, line string) error {
+	compiled, err := legacy.Compile(line)
 	if err != nil {
 		fmt.Fprintf(out, "error: %v\n", err)
 		return nil
 	}
-	printResult(out, res)
-	if res.Exit {
+	if compiled.Help {
+		fmt.Fprint(out, helpText)
+		return nil
+	}
+	if compiled.Exit {
+		fmt.Fprintln(out, "bye")
 		return errExit
 	}
+	if compiled.Source == "" && (compiled.Script == nil || len(compiled.Script.Stmts) == 0) {
+		return nil
+	}
+	opt := exec.Options{}
+	if compiled.Legacy {
+		opt.Notifications = []exec.Notification{{
+			Code:    exec.DeprecatedSyntax,
+			Message: compiled.Message,
+		}}
+	}
+	res, err := exec.Run(context.Background(), g, compiled.Source, opt)
+	if err != nil {
+		fmt.Fprintf(out, "error: %v\n", err)
+		return nil
+	}
+	printResult(out, g, res)
 	return nil
 }
 
@@ -154,6 +178,24 @@ var errExit = errors.New("exit")
 
 func commandCompleter(line string) []string {
 	cmds := []string{
+		"MATCH (",
+		"OPTIONAL MATCH (",
+		"CREATE (",
+		"MERGE (",
+		"RETURN ",
+		"WITH ",
+		"UNWIND ",
+		"EXPLAIN ",
+		"PROFILE ",
+		"SHOW STATS",
+		"SHOW LABELS",
+		"SHOW EDGE TYPES",
+		"SHOW PROPERTY KEYS",
+		"BEGIN",
+		"BEGIN READ ONLY",
+		"COMMIT",
+		"ROLLBACK",
+		"VACUUM",
 		"CREATE NODE ",
 		"CREATE EDGE ",
 		"UPDATE NODE ",
@@ -167,12 +209,6 @@ func commandCompleter(line string) []string {
 		"PATH ",
 		"DELETE NODE ",
 		"DELETE EDGE ",
-		"SHOW STATS",
-		"VACUUM",
-		"BEGIN",
-		"BEGIN READ ONLY",
-		"COMMIT",
-		"ROLLBACK",
 		"HELP",
 		"EXIT",
 	}
@@ -186,68 +222,114 @@ func commandCompleter(line string) []string {
 	return out
 }
 
-func printResult(w io.Writer, res query.Result) {
-	switch res.Kind {
-	case "nodes":
-		printNodes(w, res.Nodes)
-	case "edges":
-		printEdges(w, res.Edges)
-	case "neighbors":
-		printNeighbors(w, res.Neighbors)
-	case "path":
-		if len(res.Path) == 0 {
-			fmt.Fprintln(w, res.Message)
-			return
+func printResult(w io.Writer, g *graph.Graph, res *exec.Result) {
+	if res == nil {
+		return
+	}
+	if isStats(res) {
+		printStats(w, res)
+		return
+	}
+	if len(res.Columns) == 0 {
+		printSummary(w, res.Summary)
+		return
+	}
+	rows := res.All()
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "(no rows)")
+		return
+	}
+	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(tw, strings.Join(res.Columns, "\t"))
+	for _, row := range rows {
+		cells := make([]string, len(res.Columns))
+		for i := range res.Columns {
+			var v value.Value
+			if i < len(row) {
+				v = row[i]
+			}
+			cells[i] = formatCell(g, v)
 		}
-		printNodes(w, res.Path)
-		fmt.Fprintln(w, res.Message)
-	case "stats":
-		fmt.Fprintf(w, "nodes:  %d\nedges:  %d\nlabels: %s\n",
-			res.Stats.Nodes, res.Stats.Edges, strings.Join(res.Stats.Labels, ", "))
-	default:
-		if res.Message != "" {
-			fmt.Fprintln(w, res.Message)
+		fmt.Fprintln(tw, strings.Join(cells, "\t"))
+	}
+	_ = tw.Flush()
+}
+
+func isStats(res *exec.Result) bool {
+	return len(res.Columns) == 3 && res.Columns[0] == "nodes" && res.Columns[1] == "edges" && res.Columns[2] == "labels"
+}
+
+func printStats(w io.Writer, res *exec.Result) {
+	var nodes, edges int64
+	var labels []string
+	if rows := res.All(); len(rows) > 0 && len(rows[0]) >= 3 {
+		nodes, _ = rows[0][0].IntValue()
+		edges, _ = rows[0][1].IntValue()
+		if xs, ok := rows[0][2].ListValue(); ok {
+			for _, v := range xs {
+				s, _ := v.StringValue()
+				labels = append(labels, s)
+			}
 		}
 	}
+	fmt.Fprintf(w, "nodes:  %d\nedges:  %d\nlabels: %s\n", nodes, edges, strings.Join(labels, ", "))
 }
 
-func printNodes(w io.Writer, nodes []graph.Node) {
-	if len(nodes) == 0 {
-		fmt.Fprintln(w, "(no nodes)")
+func printSummary(w io.Writer, s exec.Summary) {
+	var parts []string
+	if s.NodesCreated > 0 {
+		parts = append(parts, fmt.Sprintf("created %d node", s.NodesCreated))
+	}
+	if s.EdgesCreated > 0 {
+		parts = append(parts, fmt.Sprintf("created %d edge", s.EdgesCreated))
+	}
+	if s.NodesDeleted > 0 {
+		parts = append(parts, fmt.Sprintf("deleted %d node", s.NodesDeleted))
+	}
+	if s.EdgesDeleted > 0 {
+		parts = append(parts, fmt.Sprintf("deleted %d edge", s.EdgesDeleted))
+	}
+	if s.PropertiesSet > 0 {
+		parts = append(parts, fmt.Sprintf("set %d property", s.PropertiesSet))
+	}
+	if s.LabelsAdded > 0 {
+		parts = append(parts, fmt.Sprintf("added %d label", s.LabelsAdded))
+	}
+	if s.LabelsRemoved > 0 {
+		parts = append(parts, fmt.Sprintf("removed %d label", s.LabelsRemoved))
+	}
+	if s.ConstraintsAdded > 0 {
+		parts = append(parts, fmt.Sprintf("added %d constraint", s.ConstraintsAdded))
+	}
+	if s.ConstraintsRemoved > 0 {
+		parts = append(parts, fmt.Sprintf("removed %d constraint", s.ConstraintsRemoved))
+	}
+	if len(parts) == 0 {
 		return
 	}
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tLABEL\tPROPS")
-	for _, n := range nodes {
-		fmt.Fprintf(tw, "%d\t%s\t%s\n", n.ID, strings.Join(n.Labels(), ","), formatProps(n.Properties()))
-	}
-	_ = tw.Flush()
+	fmt.Fprintln(w, strings.Join(parts, ", "))
 }
 
-func printEdges(w io.Writer, edges []graph.Edge) {
-	if len(edges) == 0 {
-		fmt.Fprintln(w, "(no edges)")
-		return
+func formatCell(g *graph.Graph, v value.Value) string {
+	if id, ok := v.NodeID(); ok {
+		if n, found := g.GetNode(id); found {
+			return formatNode(n)
+		}
 	}
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tFROM\tTO\tLABEL\tPROPS")
-	for _, e := range edges {
-		fmt.Fprintf(tw, "%d\t%d\t%d\t%s\t%s\n", e.ID, e.From, e.To, e.Label, formatProps(e.Properties()))
+	if id, ok := v.EdgeID(); ok {
+		if e, found := g.GetEdge(id); found {
+			return formatEdge(e)
+		}
 	}
-	_ = tw.Flush()
+	return value.Format(v)
 }
 
-func printNeighbors(w io.Writer, ns []graph.Neighbor) {
-	if len(ns) == 0 {
-		fmt.Fprintln(w, "(no neighbors)")
-		return
-	}
-	tw := tabwriter.NewWriter(w, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "DEPTH\tID\tLABEL\tPROPS")
-	for _, n := range ns {
-		fmt.Fprintf(tw, "%d\t%d\t%s\t%s\n", n.Depth, n.Node.ID, strings.Join(n.Node.Labels(), ","), formatProps(n.Node.Properties()))
-	}
-	_ = tw.Flush()
+func formatNode(n graph.Node) string {
+	return fmt.Sprintf("%d:%s {%s}", n.ID, strings.Join(n.Labels(), ","), formatProps(n.Properties()))
+}
+
+func formatEdge(e graph.Edge) string {
+	return fmt.Sprintf("%d %d -%s-> %d {%s}", e.ID, e.From, e.Label, e.To, formatProps(e.Properties()))
 }
 
 func formatProps(p map[string]value.Value) string {
@@ -265,3 +347,29 @@ func formatProps(p map[string]value.Value) string {
 	}
 	return strings.Join(parts, " ")
 }
+
+const helpText = `GQL-lite (grammar version 1):
+  MATCH (n:Label) WHERE ... RETURN n
+  CREATE (a:Person {name: "Ada"})-[:KNOWS]->(b:Person {name: "Bea"})
+  MERGE (n:Person {name: $name}) ON CREATE SET n.seen = 1
+  EXPLAIN <query>   PROFILE <query>
+  SHOW STATS        SHOW LABELS
+  BEGIN [READ ONLY]   COMMIT   ROLLBACK   VACUUM
+
+Legacy line syntax is rewritten and still runs:
+  CREATE NODE <label> {key: value, ...}
+  CREATE EDGE <from> -<LABEL>-> <to> {key: value, ...}
+  UPDATE NODE <id> {key: value, ...}
+  UPDATE EDGE <id> {key: value, ...}
+  MATCH <label> [WHERE <key> <op> <value>]
+  MATCH EDGE <label> [WHERE <key> <op> <value>]
+  GET NODE <id>
+  GET EDGE <id>
+  EDGES <from> TO <to>
+  NEIGHBORS <id> [DEPTH <n>]
+  PATH <from> TO <to>
+  DELETE NODE <id>
+  DELETE EDGE <id>
+  HELP
+  EXIT
+`
