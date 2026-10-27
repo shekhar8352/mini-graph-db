@@ -20,6 +20,6 @@ Version 0 stores one label in `Label` and scalar properties (`Kind` `s`, `i`, `f
 
 ## Text WAL
 
-The optional WAL is one query line per record, the language the shell still parses. Blank lines and lines that start with `#` are skipped. Lines are replayed in order after the snapshot is loaded. `SAVE` and `LOAD` in that file fail with the same error the shell returns, whose text is: use `graphdb backup`.
+The optional WAL is one query line per record in the legacy line language. `graphdb migrate` still replays those lines through the old executor. The shell now compiles GQL-lite and rewrites the same legacy lines through `internal/compat/legacy`. Blank lines and lines that start with `#` are skipped. `SAVE` and `LOAD` in that file fail with the same error the shell returns, whose text is: use `graphdb backup`.
 
 A missing `--wal` file is `NotFound`. Omitting `--wal` imports the snapshot alone.

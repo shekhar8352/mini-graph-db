@@ -31,13 +31,13 @@ The shell still parses one legacy statement per line. Phase 4 replaces that lang
 ## Consequences
 
 - Tasks 4.2 through 4.14 implement this document. They do not extend the grammar without a version bump and an ADR.
-- The shell keeps the legacy parser until task 4.12. Bare words in legacy property maps remain strings. In GQL-lite a bare word is a variable.
+- The shell compiles GQL-lite and rewrites the legacy line language (task 4.12). Bare words in a legacy property map remain strings. In GQL-lite a bare word is a variable.
 - Page, WAL, and MVCC format versions stay where Phase 3 left them. This ADR does not change bytes on disk.
 - `EXPLAIN` text is stable once the plan printer exists. The logical operator names in the spec are the vocabulary that printer uses.
 - Implementers treat the examples in the spec as the first parse corpus.
 
 ## Follow-up
 
-- Lexer, AST, parser, semantic analysis, executor, and the shell switch are tasks 4.2–4.14.
+- Lexer, AST, parser, semantic analysis, executor, the shell switch, goldens, and fuzz are tasks 4.2–4.14. 4.12–4.14 landed 2026-10-27.
 - Phase 11 prints the deprecation notice for rewritten legacy statements. The rewrite table in the spec is the contract.
 - Named time zones, `EXISTS` subqueries, `FOREACH`, dynamic labels, zero-hop patterns, and parameterized list types are backlog.
