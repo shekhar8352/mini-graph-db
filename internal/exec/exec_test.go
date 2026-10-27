@@ -192,6 +192,37 @@ func TestParamsAndReadOnly(t *testing.T) {
 	}
 }
 
+func TestShowAndAdminLeaves(t *testing.T) {
+	g := graph.New()
+	g.AddNode("Person", map[string]any{"name": "Ada"})
+	cols, rows := mustRun(t, g, `SHOW STATS`, Options{})
+	if len(cols) != 3 || cols[0] != "nodes" || len(rows) != 1 {
+		t.Fatalf("stats %v %v", cols, rows)
+	}
+	if n, _ := rows[0][0].IntValue(); n != 1 {
+		t.Fatalf("nodes %v", rows[0][0])
+	}
+	cols, rows = mustRun(t, g, `SHOW LABELS`, Options{})
+	if len(cols) != 1 || cols[0] != "name" || len(rows) != 1 || str(rows[0][0]) != "Person" {
+		t.Fatalf("labels %v %v", cols, rows)
+	}
+	_, err := Run(context.Background(), g, `CREATE USER alice SET PASSWORD "s3cret"`, Options{})
+	if gerr.CodeOf(err) != gerr.Unavailable {
+		t.Fatalf("dcl %v", err)
+	}
+	_, err = Run(context.Background(), g, `SHOW USERS`, Options{})
+	if gerr.CodeOf(err) != gerr.Unavailable {
+		t.Fatalf("show users %v", err)
+	}
+}
+
+func TestRunRecoversPanic(t *testing.T) {
+	res, err := Run(context.Background(), nil, `RETURN 1`, Options{})
+	if res != nil || gerr.CodeOf(err) != gerr.InvalidArgument {
+		t.Fatalf("nil graph %v %v", res, err)
+	}
+}
+
 func mustRun(t *testing.T, g *graph.Graph, src string, opt Options) ([]string, [][]value.Value) {
 	t.Helper()
 	res, err := Run(context.Background(), g, src, opt)
