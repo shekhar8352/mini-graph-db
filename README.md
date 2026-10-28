@@ -77,6 +77,8 @@ Packages depend inward only: `cmd` → `repl` → (`compat/legacy`, `exec`) → 
 | [`internal/storage/disk`](internal/storage/disk) | Page file, buffer pool, B+tree, and `OpenEngine` (not used by the shell yet) |
 | [`internal/wal`](internal/wal) | Binary write-ahead log used by the disk engine |
 | [`internal/storage/graphstore`](internal/storage/graphstore) | Nodes, edges, adjacency, indexes, catalog ids |
+| [`internal/catalog`](internal/catalog) | Declared indexes, constraints, ANALYZE stats, catalog format |
+| [`internal/index`](internal/index) | Declared secondary index keys and range lookup |
 | [`internal/txn`](internal/txn) | Snapshot isolation, versions, and commit timestamps |
 | [`internal/graph`](internal/graph) | Facade used by the query executor and the shell |
 | [`internal/compat/gobimport`](internal/compat/gobimport) | Legacy gob snapshot and text WAL import into a disk database |
@@ -112,11 +114,11 @@ O  from|type|to|edge  → outgoing adjacency
 I  to|type|from|edge  → incoming adjacency
 L  label id|node id   → label index
 T  type id|edge id    → edge-type index
-P  prop id|value|node → node property equality index
-C  kind|name          → names, ids, and id counters
+P  prop id|value|node → node property equality index; 0xFF|indexID|… → declared indexes
+C  kind|name          → names, ids, counters, indexes, constraints, stats
 ```
 
-Neighbor lookup walks the outgoing adjacency of a node. `MATCH <label>` uses the label index. Equality `WHERE` on nodes can use the property index; range comparisons (`>`, `<`, …) scan the label set and compare in the executor. Property-key ids and the next node and edge ids live in the catalog keyspace.
+Neighbor lookup walks the outgoing adjacency of a node. `MATCH <label>` uses the label index. Equality on a one-label pattern map can use the implicit property index. `CREATE INDEX` adds a declared range index (`0xFF|indexID|EncodeComposite|entityID` in `P`) that the planner uses for equality, range, and `STARTS WITH`. `ANALYZE` stores 64-bucket histograms. Property-key ids, id counters, indexes, and constraints live in the catalog keyspace.
 
 ### Traversals
 
@@ -299,7 +301,10 @@ make lint          # golangci-lint
 |---------|-----------------|
 | `internal/storage/memory` | Engine conformance: order, cursors, isolation, crash hooks |
 | `internal/storage/graphstore` | Cascade delete, id allocation, property index |
+| `internal/catalog` | Index/constraint persistence and ANALYZE stats |
+| `internal/index` | Declared index encode, equality, range, STARTS WITH |
 | `internal/graph` | CRUD, cascade delete, indexes, export/import, BFS/DFS, shortest path |
+| `internal/exec` | Index seek, constraints, SHOW, EXPLAIN planner rules |
 | `internal/query` | Table-driven parser, execute, `WHERE`, GET/MATCH/EDGES, `BEGIN`/`COMMIT`, SAVE/LOAD rejection |
 | `internal/compat/legacy` | Rewrite table from the spec, then `exec.Run` |
 | `internal/txn` | Snapshot isolation, conflicts, vacuum, concurrent readers, disk reopen |

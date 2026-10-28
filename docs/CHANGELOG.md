@@ -4,6 +4,26 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 5 — Schema, indexes, constraints, planner (2026-10-28)
+
+- **5.1** `internal/catalog` stores indexes, constraints, ANALYZE stats, and catalog format version 1 in the `C` keyspace (kinds `0x20`–`0x27`). Interned labels, edge types, property keys, and id counters stay in graphstore. Generation bumps on DDL.
+- **5.2** `internal/index` maintains declared range indexes as `0xFF|indexID|EncodeComposite|entityID` in `P`. Nulls are not indexed. `CREATE INDEX` is a blocking build in one transaction ([ADR 0011](adr/0011-index-build.md)).
+- **5.3** `UNIQUE` stays commit-time with `DeferUnique`. `EXISTS` and `TYPE` are checked at commit. Duplicate `CREATE` is `AlreadyExists`. `DROP` of a missing name is `NotFound`.
+- **5.4** `ANALYZE` writes per-label counts and 64-bucket equi-depth histograms. Auto-analyze runs after 10 000 writes.
+- **5.5** `plan.BuildWith` uses the schema for index selection (equality, range, `STARTS WITH`), disconnected join order, `LIMIT` under a 1:1 `Project`, and skipping `Sort` when an index already yields that order. The implicit node property index still serves one-label map equality.
+- **5.6** `EXPLAIN` tests cover declared index use. `BenchmarkIndexEquality` measures lookup at 1k and 10k nodes.
+- **5.7** `SHOW INDEXES` and `SHOW CONSTRAINTS` return catalog rows with `ONLINE` state.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P3 Transactions | Unique conflicts at commit remain `ConstraintViolation`. Index and constraint DDL is one transaction: crash leaves the object fully present or fully absent. |
+| P10 Change management | Grammar version stays 1. Catalog format version 1 is additive (`0x20`+). The implicit `P` key layout is unchanged. `DROP` of a missing index or constraint is now `NotFound`, matching the spec. |
+| P12 Testing | Catalog round-trip, index seek, unique/exists/type, `SHOW`, `EXPLAIN` index use, and `go test -race ./...` are green. |
+| P13 Documentation | ADR 0011, the architecture note, the query-language DDL section, the README, and this changelog describe Phase 5. |
+| P1–P2, P4–P9, P11 | No change to the page format or the log format. |
+
 ### Phase 4.12–4.14 — Shell, goldens, and fuzz (2026-10-27)
 
 - **4.12** The shell compiles each line with `internal/compat/legacy` and runs it through `exec.Run`. A GQL-lite line is executed as written. A legacy line is rewritten to the table in the spec and carries a `DeprecatedSyntax` notice. `HELP` and `EXIT` stay shell commands. `SAVE` and `LOAD` still fail with the message: use `graphdb backup`.
