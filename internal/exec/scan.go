@@ -22,6 +22,7 @@ type scanIter struct {
 	mode  int
 	node  *ast.NodePat
 	path  string
+	seek  *plan.IndexSeek
 	seed  row
 	ids   []uint64
 	i     int
@@ -36,7 +37,7 @@ func (s *scanIter) Next(ctx context.Context) (row, bool, error) {
 		if err := s.eng.refresh(); err != nil {
 			return row{}, false, err
 		}
-		ids, err := s.eng.scanIDs(s.mode, s.node, s.seed)
+		ids, err := s.eng.scanIDs(s.mode, s.node, s.seek, s.seed)
 		if err != nil {
 			return row{}, false, err
 		}
@@ -76,10 +77,10 @@ func (s *scanIter) Next(ctx context.Context) (row, bool, error) {
 	return row{}, false, nil
 }
 
-func (e *engine) scanIDs(mode int, pat *ast.NodePat, seed row) ([]uint64, error) {
+func (e *engine) scanIDs(mode int, pat *ast.NodePat, seek *plan.IndexSeek, seed row) ([]uint64, error) {
 	switch mode {
 	case modeSeek:
-		return e.seekIDs(pat, seed)
+		return e.seekIDs(pat, seek, seed)
 	case modeLabel:
 		return e.labelIDs(pat), nil
 	default:
@@ -117,7 +118,10 @@ func (e *engine) labelIDs(pat *ast.NodePat) []uint64 {
 	return ids
 }
 
-func (e *engine) seekIDs(pat *ast.NodePat, seed row) ([]uint64, error) {
+func (e *engine) seekIDs(pat *ast.NodePat, seek *plan.IndexSeek, seed row) ([]uint64, error) {
+	if seek != nil && seek.Name != "" {
+		return e.declaredSeek(seek, seed)
+	}
 	if pat == nil || pat.Props == nil || len(pat.Props.Entries) == 0 {
 		return e.labelIDs(pat), nil
 	}
@@ -136,6 +140,94 @@ func (e *engine) seekIDs(pat *ast.NodePat, seed row) ([]uint64, error) {
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids, nil
+}
+
+func (e *engine) declaredSeek(seek *plan.IndexSeek, seed row) ([]uint64, error) {
+	env := e.env(seed)
+	var ids []uint64
+	var err error
+	switch seek.Op {
+	case "starts":
+		if seek.Prefix == nil {
+			return nil, nil
+		}
+		v, err := expr.Eval(seek.Prefix, env)
+		if err != nil {
+			return nil, err
+		}
+		s, ok := v.StringValue()
+		if !ok {
+			return nil, nil
+		}
+		ids, err = e.g.IndexStartsWith(seek.Name, s)
+	case "range":
+		var lo, hi []value.Value
+		loInc, hiInc := seek.LowInc, seek.HighInc
+		if seek.Low != nil {
+			v, err := expr.Eval(seek.Low, env)
+			if err != nil {
+				return nil, err
+			}
+			lo = []value.Value{v}
+		}
+		if seek.High != nil {
+			v, err := expr.Eval(seek.High, env)
+			if err != nil {
+				return nil, err
+			}
+			hi = []value.Value{v}
+		}
+		ids, err = e.g.IndexRange(seek.Name, lo, hi, loInc, hiInc)
+	default:
+		sch, err := e.g.Schema()
+		if err != nil {
+			return nil, err
+		}
+		ix, ok := sch.IndexByName(seek.Name)
+		if !ok {
+			return e.labelIDs(seek.Node), nil
+		}
+		vals, complete, err := e.indexVals(ix.Props, seek.Node, env)
+		if err != nil {
+			return nil, err
+		}
+		if complete {
+			ids, err = e.g.IndexEqual(seek.Name, vals)
+		} else {
+			ids, err = e.g.IndexPrefix(seek.Name, vals)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+	e.hit(int64(len(ids)))
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, nil
+}
+
+func (e *engine) indexVals(props []string, pat *ast.NodePat, env *expr.Env) ([]value.Value, bool, error) {
+	have := map[string]ast.Expr{}
+	if pat != nil && pat.Props != nil {
+		for _, ent := range pat.Props.Entries {
+			have[ent.Key] = ent.Value
+		}
+	}
+	var vals []value.Value
+	for _, p := range props {
+		ex, ok := have[p]
+		if !ok {
+			return vals, false, nil
+		}
+		v, err := expr.Eval(ex, env)
+		if err != nil {
+			return nil, false, err
+		}
+		if v.Kind() == value.KindNull || !v.Storable() {
+			return nil, false, nil
+		}
+		vals = append(vals, v)
+	}
+	return vals, true, nil
 }
 
 func (e *engine) nodeOK(n expr.NodeRec, pat *ast.NodePat, env *expr.Env) (bool, error) {

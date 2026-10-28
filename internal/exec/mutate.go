@@ -759,7 +759,7 @@ func (e *engine) leaf(ctx context.Context, op *plan.Leaf, seed row) ([]row, erro
 		return e.callRows(op.Detail, seed)
 	case "Show":
 		return e.showRows(op.Detail, seed)
-	case "Analyze", "CreateIndex", "DropIndex":
+	case "Analyze", "CreateIndex", "DropIndex", "CreateConstraint", "DropConstraint":
 		return nil, nil
 	case "Use", "Terminate", "CreateDatabase", "DropDatabase",
 		"CreateUser", "AlterUser", "DropUser", "CreateRole", "DropRole",
@@ -830,11 +830,61 @@ func (e *engine) showRows(detail string, seed row) ([]row, error) {
 			}
 		}
 		return nameRows(seed, "name", sortedKeys(seen))
-	case "INDEXES", "CONSTRAINTS", "TRANSACTIONS":
+	case "INDEXES":
+		return e.showIndexes(seed)
+	case "CONSTRAINTS":
+		return e.showConstraints(seed)
+	case "TRANSACTIONS":
 		return nil, nil
 	default:
 		return nil, gerr.Newf(gerr.InvalidArgument, "unknown SHOW %s", detail)
 	}
+}
+
+func (e *engine) showIndexes(seed row) ([]row, error) {
+	sch, err := e.g.Schema()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]row, 0, len(sch.Indexes))
+	for _, ix := range sch.Indexes {
+		out := seed.clone()
+		out.val["name"] = value.String(ix.Name)
+		out.val["entity"] = value.String(ix.Entity.String())
+		out.val["labelOrType"] = value.String(ix.Label)
+		ps := make([]value.Value, len(ix.Props))
+		for i, p := range ix.Props {
+			ps[i] = value.String(p)
+		}
+		out.val["properties"] = value.List(ps...)
+		out.val["state"] = value.String(ix.State.String())
+		rows = append(rows, out)
+	}
+	return rows, nil
+}
+
+func (e *engine) showConstraints(seed row) ([]row, error) {
+	sch, err := e.g.Schema()
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]row, 0, len(sch.Constraints))
+	for _, c := range sch.Constraints {
+		out := seed.clone()
+		out.val["name"] = value.String(c.Name)
+		out.val["entity"] = value.String(c.Entity.String())
+		out.val["labelOrType"] = value.String(c.Label)
+		out.val["properties"] = value.List(value.String(c.Prop))
+		out.val["state"] = value.String("ONLINE")
+		out.val["kind"] = value.String(c.Kind.String())
+		if c.TypeName != "" {
+			out.val["typeName"] = value.String(c.TypeName)
+		} else {
+			out.val["typeName"] = value.Null()
+		}
+		rows = append(rows, out)
+	}
+	return rows, nil
 }
 
 func nameRows(seed row, col string, names []string) ([]row, error) {
