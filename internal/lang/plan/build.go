@@ -1,9 +1,11 @@
 package plan
 
 import (
+	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/shekhar8352/mini-graph-db/internal/catalog"
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/lang/ast"
 	"github.com/shekhar8352/mini-graph-db/internal/lang/parser"
@@ -13,6 +15,11 @@ import (
 // Build checks src and returns its logical plan.
 // A semantic or syntax error is returned unchanged.
 func Build(src string) (*Plan, error) {
+	return BuildWith(src, nil)
+}
+
+// BuildWith plans src using catalog statistics and declared indexes when sch is set.
+func BuildWith(src string, sch *catalog.Schema) (*Plan, error) {
 	if err := sema.Check(src); err != nil {
 		return nil, err
 	}
@@ -25,7 +32,7 @@ func Build(src string) (*Plan, error) {
 		return p, nil
 	}
 	for _, st := range script.Stmts {
-		op, err := buildStmt(st)
+		op, err := BuildStmt(st, sch)
 		if err != nil {
 			return nil, err
 		}
@@ -34,14 +41,23 @@ func Build(src string) (*Plan, error) {
 	return p, nil
 }
 
-func buildStmt(st ast.Stmt) (Op, error) {
+// BuildStmt plans one statement that already passed the semantic checker.
+func BuildStmt(st ast.Stmt, sch *catalog.Schema) (Op, error) {
+	op, err := buildStmt(st, sch)
+	if err != nil {
+		return nil, err
+	}
+	return optimize(op, sch), nil
+}
+
+func buildStmt(st ast.Stmt, sch *catalog.Schema) (Op, error) {
 	switch s := st.(type) {
 	case *ast.Query:
-		return buildQuery(s), nil
+		return buildQuery(s, sch), nil
 	case *ast.Explain:
-		return buildQuery(s.Query), nil
+		return buildQuery(s.Query, sch), nil
 	case *ast.Profile:
-		return buildQuery(s.Query), nil
+		return buildQuery(s.Query, sch), nil
 	case *ast.Begin:
 		if s.ReadOnly {
 			return &Leaf{Name: "Begin", Detail: "READ ONLY"}, nil
@@ -110,13 +126,13 @@ func privText(priv, db, rel, who string) string {
 	return priv + " ON DATABASE " + db + " " + rel + " " + who
 }
 
-func buildQuery(q *ast.Query) Op {
+func buildQuery(q *ast.Query, sch *catalog.Schema) Op {
 	if q == nil || len(q.Parts) == 0 {
 		return nil
 	}
 	var cur Op
 	for i, part := range q.Parts {
-		side := newBld().single(part)
+		side := newBld(sch).single(part)
 		if i == 0 {
 			cur = side
 			continue
@@ -133,10 +149,11 @@ func buildQuery(q *ast.Query) Op {
 type bld struct {
 	bound map[string]bool
 	order []string
+	sch   *catalog.Schema
 }
 
-func newBld() *bld {
-	return &bld{bound: map[string]bool{}}
+func newBld(sch *catalog.Schema) *bld {
+	return &bld{bound: map[string]bool{}, sch: sch}
 }
 
 func (b *bld) bind(name string) {
@@ -225,10 +242,50 @@ func (b *bld) pattern(in Op, p *ast.Pattern) Op {
 	if p == nil {
 		return in
 	}
-	for _, path := range p.Paths {
+	paths := p.Paths
+	if in == nil && b.sch != nil && disconnectedNodes(paths) {
+		paths = orderPaths(paths, b.sch)
+	}
+	for _, path := range paths {
 		in = b.path(in, path)
 	}
 	return in
+}
+
+func disconnectedNodes(paths []*ast.Path) bool {
+	if len(paths) < 2 {
+		return false
+	}
+	for _, p := range paths {
+		if p == nil || p.Fn != ast.PathPlain || len(p.Rels) > 0 || len(p.Nodes) != 1 {
+			return false
+		}
+	}
+	return true
+}
+
+func orderPaths(paths []*ast.Path, sch *catalog.Schema) []*ast.Path {
+	out := append([]*ast.Path(nil), paths...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return nodeCost(out[i].Nodes[0], sch) < nodeCost(out[j].Nodes[0], sch)
+	})
+	return out
+}
+
+func nodeCost(n *ast.NodePat, sch *catalog.Schema) float64 {
+	if n == nil {
+		return sch.EstimateAll()
+	}
+	if seekable(n) {
+		if len(n.Labels) == 1 && len(n.Labels[0]) == 1 && n.Props != nil && len(n.Props.Entries) > 0 {
+			return sch.EstimateEq(n.Labels[0][0], n.Props.Entries[0].Key)
+		}
+		return 1
+	}
+	if len(n.Labels) > 0 && len(n.Labels[0]) > 0 {
+		return sch.EstimateLabel(n.Labels[0][0])
+	}
+	return sch.EstimateAll()
 }
 
 func (b *bld) path(in Op, p *ast.Path) Op {
@@ -274,15 +331,7 @@ func (b *bld) placeNode(in Op, n *ast.NodePat) Op {
 		}
 		return in
 	}
-	var leaf Op
-	switch {
-	case seekable(n):
-		leaf = &IndexSeek{Node: n}
-	case len(n.Labels) > 0:
-		leaf = &LabelScan{Node: n}
-	default:
-		leaf = &NodeScan{Node: n}
-	}
+	leaf := b.scanLeaf(n)
 	b.bind(n.Name)
 	if in == nil {
 		return leaf
@@ -291,10 +340,36 @@ func (b *bld) placeNode(in Op, n *ast.NodePat) Op {
 }
 
 func seekable(n *ast.NodePat) bool {
-	if n.Props == nil || len(n.Props.Entries) == 0 {
+	if n == nil || n.Props == nil || len(n.Props.Entries) == 0 {
 		return false
 	}
 	return len(n.Labels) == 1 && len(n.Labels[0]) == 1
+}
+
+func (b *bld) scanLeaf(n *ast.NodePat) Op {
+	if n == nil {
+		return &NodeScan{Node: n}
+	}
+	label := ""
+	if len(n.Labels) > 0 && len(n.Labels[0]) == 1 {
+		label = n.Labels[0][0]
+	}
+	eq := map[string]ast.Expr{}
+	if n.Props != nil {
+		for _, ent := range n.Props.Entries {
+			eq[ent.Key] = ent.Value
+		}
+	}
+	if ix, ok := pickIndex(b.sch, label, eq, "", nil, nil, nil); ok {
+		return &IndexSeek{Node: n, Name: ix.Name, Op: "="}
+	}
+	if seekable(n) {
+		return &IndexSeek{Node: n}
+	}
+	if len(n.Labels) > 0 {
+		return &LabelScan{Node: n}
+	}
+	return &NodeScan{Node: n}
 }
 
 func (b *bld) placeExpand(in Op, from *ast.NodePat, rel *ast.RelPat, to *ast.NodePat, path string) Op {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/shekhar8352/mini-graph-db/internal/catalog"
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/storage"
 	"github.com/shekhar8352/mini-graph-db/internal/storage/graphstore"
@@ -26,6 +27,7 @@ type Graph struct {
 	mu     sync.Mutex
 	held   storage.Tx
 	heldRO bool
+	schema *catalog.Schema
 }
 
 // New returns an empty graph backed by the in-memory engine.
@@ -67,13 +69,17 @@ func (g *Graph) Commit() error {
 		return gerr.New(gerr.InvalidArgument, "no transaction")
 	}
 	if !ro {
-		if err := g.prepareUniques(tx); err != nil {
+		if err := g.prepareConstraints(tx); err != nil {
+			return err
+		}
+		if err := maybeAnalyze(tx); err != nil {
 			return err
 		}
 	}
 	g.mu.Lock()
 	g.held = nil
 	g.heldRO = false
+	g.schema = nil
 	g.mu.Unlock()
 	err := tx.Commit()
 	if err != nil && txOpen(tx) {
@@ -631,7 +637,9 @@ func (g *Graph) write(fn func(storage.Tx) error) error {
 		if heldRO {
 			return storage.ErrReadOnly
 		}
-		return fn(held)
+		err := fn(held)
+		g.schema = nil
+		return err
 	}
 	tx, err := g.eng.Begin(storage.TxOptions{})
 	if err != nil {
@@ -641,10 +649,19 @@ func (g *Graph) write(fn func(storage.Tx) error) error {
 		_ = tx.Rollback()
 		return err
 	}
+	if err := g.prepareConstraints(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	if err := maybeAnalyze(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
 	if err := tx.Commit(); err != nil {
 		_ = tx.Rollback()
 		return err
 	}
+	g.schema = nil
 	return nil
 }
 
