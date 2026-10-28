@@ -125,6 +125,9 @@ func UpdateNode(tx storage.Tx, id uint64, props map[string]value.Value) (Node, e
 	if err := unindexProps(tx, id, n.Props); err != nil {
 		return Node{}, err
 	}
+	if err := unindexDeclaredNode(tx, n); err != nil {
+		return Node{}, err
+	}
 	byName := make(map[string]Prop, len(n.Props)+len(props))
 	for _, p := range n.Props {
 		byName[p.Name] = p
@@ -170,6 +173,12 @@ func DeleteNode(tx storage.Tx, id uint64) error {
 		return err
 	}
 	if err := unindexProps(tx, id, n.Props); err != nil {
+		return err
+	}
+	if err := unindexDeclaredNode(tx, n); err != nil {
+		return err
+	}
+	if err := bumpWrites(tx); err != nil {
 		return err
 	}
 	return tx.Delete(storage.KSNode, idKey(id))
@@ -225,6 +234,9 @@ func UpdateEdge(tx storage.Tx, id uint64, props map[string]value.Value) (Edge, e
 	}
 	if len(props) == 0 {
 		return rec.Edge, nil
+	}
+	if err := unindexDeclaredEdge(tx, rec.Edge); err != nil {
+		return Edge{}, err
 	}
 	byName := make(map[string]Prop, len(rec.Props)+len(props))
 	for _, p := range rec.Props {
@@ -308,6 +320,9 @@ func ReplaceEdgeProps(tx storage.Tx, id uint64, props map[string]value.Value) (E
 	if err != nil {
 		return Edge{}, err
 	}
+	if err := unindexDeclaredEdge(tx, rec.Edge); err != nil {
+		return Edge{}, err
+	}
 	rec.Props = ps
 	if err := writeEdge(tx, rec); err != nil {
 		return Edge{}, err
@@ -319,6 +334,9 @@ func ReplaceEdgeProps(tx storage.Tx, id uint64, props map[string]value.Value) (E
 func DeleteEdgeProps(tx storage.Tx, id uint64, names []string) (Edge, error) {
 	rec, err := loadEdge(tx, id)
 	if err != nil {
+		return Edge{}, err
+	}
+	if err := unindexDeclaredEdge(tx, rec.Edge); err != nil {
 		return Edge{}, err
 	}
 	rec.Props = dropProps(rec.Props, names)
@@ -338,6 +356,9 @@ func rewriteNode(tx storage.Tx, n Node, labels []string, props []Prop) (Node, er
 		return Node{}, err
 	}
 	if err := unindexProps(tx, n.ID, n.Props); err != nil {
+		return Node{}, err
+	}
+	if err := unindexDeclaredNode(tx, n); err != nil {
 		return Node{}, err
 	}
 	n.Labels = normalizeLabels(labels)
@@ -367,6 +388,12 @@ func dropProps(props []Prop, names []string) []Prop {
 func DeleteEdge(tx storage.Tx, id uint64) error {
 	rec, err := loadEdge(tx, id)
 	if err != nil {
+		return err
+	}
+	if err := unindexDeclaredEdge(tx, rec.Edge); err != nil {
+		return err
+	}
+	if err := bumpWrites(tx); err != nil {
 		return err
 	}
 	if err := tx.Delete(storage.KSOut, outKey(rec.From, rec.TypeID, rec.To, rec.ID)); err != nil {
@@ -676,7 +703,13 @@ func writeNode(tx storage.Tx, n Node) error {
 	if err := indexLabels(tx, n.ID, lids); err != nil {
 		return err
 	}
-	return indexProps(tx, n.ID, n.Props)
+	if err := indexProps(tx, n.ID, n.Props); err != nil {
+		return err
+	}
+	if err := indexDeclaredNode(tx, n); err != nil {
+		return err
+	}
+	return bumpWrites(tx)
 }
 
 func writeEdge(tx storage.Tx, e edgeRec) error {
@@ -689,7 +722,13 @@ func writeEdge(tx storage.Tx, e edgeRec) error {
 	if err := tx.Put(storage.KSIn, inKey(e.To, e.TypeID, e.From, e.ID), nil); err != nil {
 		return err
 	}
-	return tx.Put(storage.KSEdgeType, typeKey(e.TypeID, e.ID), nil)
+	if err := tx.Put(storage.KSEdgeType, typeKey(e.TypeID, e.ID), nil); err != nil {
+		return err
+	}
+	if err := indexDeclaredEdge(tx, e.Edge); err != nil {
+		return err
+	}
+	return bumpWrites(tx)
 }
 
 func insertNode(tx storage.Tx, n Node) error {
@@ -1023,6 +1062,11 @@ func clearKeyspace(tx storage.Tx, ks storage.Keyspace) error {
 		}
 	}
 	return nil
+}
+
+// ScanCatalog returns catalog keys with prefix, in byte order.
+func ScanCatalog(tx storage.Tx, prefix []byte) ([][]byte, error) {
+	return scanPrefix(tx, storage.KSCatalog, prefix)
 }
 
 func scanPrefix(tx storage.Tx, ks storage.Keyspace, prefix []byte) ([][]byte, error) {

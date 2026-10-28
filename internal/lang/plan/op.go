@@ -80,11 +80,20 @@ type LabelScan struct {
 
 func (*LabelScan) op() {}
 
-// IndexSeek is an equality lookup on one label and the pattern's property map.
-// A node pattern with a single label and at least one property uses this operator.
+// IndexSeek is an index lookup on a node pattern.
+// Name is a declared ONLINE index. Empty Name uses the implicit property index
+// on the pattern map. Op is "", "=", "range", or "starts".
 type IndexSeek struct {
-	Node *ast.NodePat
-	Path string
+	Node    *ast.NodePat
+	Path    string
+	Name    string
+	Op      string
+	Prop    string
+	Low     ast.Expr
+	High    ast.Expr
+	LowInc  bool
+	HighInc bool
+	Prefix  ast.Expr
 }
 
 func (*IndexSeek) op() {}
