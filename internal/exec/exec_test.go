@@ -484,8 +484,8 @@ func TestExplainProfileAndSummary(t *testing.T) {
 		t.Fatalf("drop %v %+v", err, res.Summary)
 	}
 	res, err = Run(context.Background(), g, `DROP CONSTRAINT missing_name`, Options{})
-	if err != nil || res.Summary.ConstraintsRemoved != 0 {
-		t.Fatalf("missing drop %v %+v", err, res.Summary)
+	if gerr.CodeOf(err) != gerr.NotFound {
+		t.Fatalf("missing drop %v %+v", err, res)
 	}
 
 	res, err = Run(context.Background(), g, `RETURN 1 AS n UNION ALL RETURN 2 AS n`, Options{

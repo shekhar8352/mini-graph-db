@@ -12,12 +12,16 @@ import (
 	"context"
 	"fmt"
 
+	"strings"
+
+	"github.com/shekhar8352/mini-graph-db/internal/catalog"
 	"github.com/shekhar8352/mini-graph-db/internal/exec/expr"
 	"github.com/shekhar8352/mini-graph-db/internal/gerr"
 	"github.com/shekhar8352/mini-graph-db/internal/graph"
 	"github.com/shekhar8352/mini-graph-db/internal/lang/ast"
 	"github.com/shekhar8352/mini-graph-db/internal/lang/parser"
 	"github.com/shekhar8352/mini-graph-db/internal/lang/plan"
+	"github.com/shekhar8352/mini-graph-db/internal/lang/sema"
 	"github.com/shekhar8352/mini-graph-db/internal/value"
 )
 
@@ -59,11 +63,10 @@ func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (res *Res
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	script, err := parser.Parse(src)
-	if err != nil {
+	if err := sema.Check(src); err != nil {
 		return nil, err
 	}
-	p, err := plan.Build(src)
+	script, err := parser.Parse(src)
 	if err != nil {
 		return nil, err
 	}
@@ -75,12 +78,17 @@ func Run(ctx context.Context, g *graph.Graph, src string, opt Options) (res *Res
 	if script != nil {
 		stmts = script.Stmts
 	}
-	if len(stmts) != len(p.Stmts) {
-		return nil, gerr.New(gerr.Internal, "plan does not match the script")
-	}
 	res = &Result{}
-	for i, st := range p.Stmts {
-		res, err = eng.runStmt(ctx, stmts[i], st)
+	for _, st := range stmts {
+		sch, err := g.Schema()
+		if err != nil {
+			return nil, err
+		}
+		op, err := plan.BuildStmt(st, sch)
+		if err != nil {
+			return nil, err
+		}
+		res, err = eng.runStmt(ctx, st, op)
 		if err != nil {
 			return nil, err
 		}
@@ -133,25 +141,67 @@ func (e *engine) runBody(ctx context.Context, st ast.Stmt, op plan.Op) (*Result,
 	case *ast.Profile:
 		e.profile = true
 		return e.runOp(ctx, op)
-	case *ast.CreateConstraint:
-		if nodeUnique(s) {
-			if err := e.g.DeclareUnique(s.Name, s.For.On, s.Prop); err != nil {
-				return nil, err
-			}
-			e.sum.ConstraintsAdded++
-			return e.result(nil, nil), nil
-		}
-	case *ast.DropConstraint:
-		removed, err := e.g.DropUnique(s.Name)
-		if err != nil {
+	case *ast.CreateIndex:
+		if err := e.createIndex(s); err != nil {
 			return nil, err
 		}
-		if removed {
-			e.sum.ConstraintsRemoved++
+		e.sum.IndexesAdded++
+		return e.result(nil, nil), nil
+	case *ast.DropIndex:
+		if err := e.g.DropIndex(s.Name); err != nil {
+			return nil, err
+		}
+		e.sum.IndexesRemoved++
+		return e.result(nil, nil), nil
+	case *ast.CreateConstraint:
+		if err := e.createConstraint(s); err != nil {
+			return nil, err
+		}
+		e.sum.ConstraintsAdded++
+		if s.Kind == ast.ConstraintUnique {
+			e.sum.IndexesAdded++
+		}
+		return e.result(nil, nil), nil
+	case *ast.DropConstraint:
+		if err := e.g.DropConstraint(s.Name); err != nil {
+			return nil, err
+		}
+		e.sum.ConstraintsRemoved++
+		return e.result(nil, nil), nil
+	case *ast.Analyze:
+		if err := e.g.Analyze(); err != nil {
+			return nil, err
 		}
 		return e.result(nil, nil), nil
 	}
 	return e.runOp(ctx, op)
+}
+
+func (e *engine) createIndex(s *ast.CreateIndex) error {
+	if s.For == nil {
+		return gerr.New(gerr.InvalidArgument, "index needs a pattern")
+	}
+	props := make([]string, 0, len(s.Props))
+	for _, p := range s.Props {
+		if p != nil {
+			props = append(props, p.Prop)
+		}
+	}
+	return e.g.CreateIndex(s.Name, s.For.Edge, s.For.On, props, false)
+}
+
+func (e *engine) createConstraint(s *ast.CreateConstraint) error {
+	if s.For == nil {
+		return gerr.New(gerr.InvalidArgument, "constraint needs a pattern")
+	}
+	kind := catalog.UniqueConstraint
+	switch s.Kind {
+	case ast.ConstraintExists:
+		kind = catalog.ExistsConstraint
+	case ast.ConstraintType:
+		kind = catalog.TypeConstraint
+	}
+	return e.g.CreateConstraint(s.Name, s.For.Edge, s.For.On, s.Prop, kind, strings.ToUpper(s.Type))
 }
 
 func (e *engine) explain(op plan.Op) *Result {
@@ -166,10 +216,6 @@ func txnControl(st ast.Stmt) bool {
 	default:
 		return false
 	}
-}
-
-func nodeUnique(c *ast.CreateConstraint) bool {
-	return c.Kind == ast.ConstraintUnique && c.For != nil && !c.For.Edge && c.For.On != "" && c.Prop != ""
 }
 
 type engine struct {

@@ -23,7 +23,7 @@ func (e *engine) openPlan(op plan.Op, seed row) iterator {
 	case *plan.LabelScan:
 		return &scanIter{eng: e, mode: modeLabel, node: n.Node, path: n.Path, seed: seed}
 	case *plan.IndexSeek:
-		return &scanIter{eng: e, mode: modeSeek, node: n.Node, path: n.Path, seed: seed}
+		return &scanIter{eng: e, mode: modeSeek, node: n.Node, path: n.Path, seek: n, seed: seed}
 	case *plan.Expand:
 		return newExpand(e, n, e.open(n.Input, seed))
 	case *plan.Filter:
