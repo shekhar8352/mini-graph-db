@@ -570,11 +570,11 @@ CREATE CONSTRAINT person_name_exists FOR (n:Person) REQUIRE n.name IS NOT NULL;
 CREATE CONSTRAINT person_age_type FOR (n:Person) REQUIRE n.age IS :: INT;
 ```
 
-The parenthesized variable in `FOR` and the variable in `ON` or `REQUIRE` are the same name. A property list has at least one property. Enforcement, index population, and the states `ONLINE`, `POPULATING`, and `FAILED` are Phase 5. Until a build finishes, `SHOW INDEXES` and `SHOW CONSTRAINTS` still return the catalog row.
+The parenthesized variable in `FOR` and the variable in `ON` or `REQUIRE` are the same name. A property list has at least one property. `CREATE INDEX` and `CREATE CONSTRAINT` populate in the same transaction and commit `ONLINE` ([ADR 0011](../adr/0011-index-build.md)). Null and non-storable values are omitted from declared indexes. `UNIQUE` is checked at commit. `EXISTS` requires a non-null property on every matching entity. `TYPE` requires that a present non-null property has that kind. `SHOW` reports `ONLINE`, `POPULATING`, or `FAILED`; a blocking build does not persist the last two.
 
 `SHOW INDEXES` columns: `name`, `entity` (`"node"` or `"edge"`), `labelOrType`, `properties` (list of strings), `state`. `SHOW CONSTRAINTS` adds `kind` (`"unique"`, `"exists"`, or `"type"`) and `typeName` (null except for a type constraint).
 
-`SHOW LABELS`, `SHOW EDGE TYPES`, and `SHOW PROPERTY KEYS` return one column, `name`, sorted. `SHOW STATS` returns one row: `nodes`, `edges`, and `labels` (the sorted label list). `ANALYZE` refreshes planner statistics; that refresh is Phase 5. The statement is legal in this grammar.
+`SHOW LABELS`, `SHOW EDGE TYPES`, and `SHOW PROPERTY KEYS` return one column, `name`, sorted. `SHOW STATS` returns one row: `nodes`, `edges`, and `labels` (the sorted label list). `ANALYZE` stores per-label counts and 64-bucket equi-depth histograms for the planner. The next commit after 10 000 writes also refreshes those stats.
 
 ## DCL
 

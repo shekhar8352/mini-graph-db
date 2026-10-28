@@ -16,6 +16,12 @@ Copied from the roadmap so they are not "fixed" opportunistically:
 - Encryption at rest (rely on filesystem/volume encryption; document in Phase 8).
 - Graph algorithms library (PageRank, community detection) — traversal and shortest paths only.
 
+## Discovered during Phase 5
+
+- Online, batched index build with `POPULATING`/`FAILED` and catch-up of concurrent writes ([ADR 0011](adr/0011-index-build.md)).
+- Physical expand direction chosen from degree statistics for `DirEither` hops.
+- A 10M-node index lookup benchmark; CI runs `BenchmarkIndexEquality` at 1k and 10k.
+
 ## Discovered during Phase 4.1
 
 Outside grammar version 1, recorded in [spec/query-language.md](spec/query-language.md):
