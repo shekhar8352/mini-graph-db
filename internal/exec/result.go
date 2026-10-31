@@ -75,3 +75,16 @@ func (r *Result) All() [][]value.Value {
 	}
 	return r.rows
 }
+
+// Rows builds a finished result. cols and each row are copied.
+// The server uses this for statements it answers itself, such as SHOW DATABASES.
+func Rows(cols []string, rows [][]value.Value) *Result {
+	out := make([][]value.Value, len(rows))
+	for i, row := range rows {
+		out[i] = append([]value.Value(nil), row...)
+	}
+	return &Result{
+		Columns: append([]string(nil), cols...),
+		rows:    out,
+	}
+}
