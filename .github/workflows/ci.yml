@@ -29,3 +29,9 @@ jobs:
 
       - name: Lint and test
         run: make lint test
+
+      - name: Check generated protobuf
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          make proto
+          git diff --exit-code
