@@ -49,6 +49,10 @@ type Options struct {
 	GroupCommit time.Duration
 	// Archiver receives each sealed segment. Nil skips archiving.
 	Archiver Archiver
+	// NoFsync skips the fsync in Sync. Bytes are still written.
+	// A crash can drop a commit that Sync already acknowledged.
+	// The default is to fsync. Callers that set this must log it.
+	NoFsync bool
 }
 
 // Log is one segmented write-ahead log. Append buffers records.
@@ -64,6 +68,7 @@ type Log struct {
 	segSize  int64
 	group    time.Duration
 	archiver Archiver
+	noFsync  bool
 
 	seg       *os.File
 	path      string
@@ -120,6 +125,7 @@ func Open(dir string, opt Options) (*Log, error) {
 		segSize:  opt.SegmentSize,
 		group:    opt.GroupCommit,
 		archiver: opt.Archiver,
+		noFsync:  opt.NoFsync,
 		next:     1,
 		fileEnd:  1,
 		durable:  1,
@@ -223,10 +229,12 @@ func (l *Log) Append(typ Type, txnID uint64, payload []byte) (LSN, error) {
 // Sync writes every buffered record and fsyncs them.
 // When other Sync calls are already waiting, the leader pauses for the
 // group-commit window so the batch shares one fsync. A lone Sync does not wait.
+// NoFsync still writes the bytes and reports success, but skips the fsync.
 //
-// A nil error means every Append that returned before this Sync is durable.
-// A non-nil error means the caller must treat the new records as unacknowledged.
-// A prefix of that batch may still be on disk; reopen the log to see it.
+// A nil error means every Append that returned before this Sync is durable
+// when fsync is enabled. A non-nil error means the caller must treat the new
+// records as unacknowledged. A prefix of that batch may still be on disk;
+// reopen the log to see it.
 func (l *Log) Sync() error {
 	l.mu.Lock()
 	if l.closed {
@@ -508,6 +516,10 @@ func (l *Log) writeFull(p []byte) error {
 
 func (l *Log) syncFile() error {
 	if l.seg == nil {
+		return nil
+	}
+	if l.noFsync {
+		l.syncedOff = l.segLen
 		return nil
 	}
 	var err error
