@@ -187,3 +187,63 @@ func TestInvalidLogLevel(t *testing.T) {
 		t.Fatal("expected invalid log-level to fail")
 	}
 }
+
+func TestConfigCommands(t *testing.T) {
+	cmd := newRootCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"config", "print-defaults"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `bind = "127.0.0.1:9530"`) {
+		t.Fatalf("defaults %s", out.String())
+	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "graphdb.toml")
+	if err := os.WriteFile(path, []byte("bind = \"nope\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bad := newRootCmd()
+	bad.SetOut(io.Discard)
+	bad.SetErr(io.Discard)
+	bad.SetArgs([]string{"config", "validate", "--config", path})
+	if err := bad.Execute(); err == nil {
+		t.Fatal("expected invalid config")
+	}
+
+	ok := newRootCmd()
+	var good bytes.Buffer
+	ok.SetOut(&good)
+	ok.SetErr(io.Discard)
+	ok.SetArgs([]string{"config", "validate", "--bind", "0.0.0.0:1", "--insecure-plaintext"})
+	if err := ok.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(good.String(), "config ok") {
+		t.Fatalf("validate %s", good.String())
+	}
+}
+
+func TestGenCertCommand(t *testing.T) {
+	dir := t.TempDir()
+	cmd := newRootCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(io.Discard)
+	cert := filepath.Join(dir, "c.pem")
+	key := filepath.Join(dir, "k.pem")
+	cmd.SetArgs([]string{"admin", "gen-cert", "--cert", cert, "--key", key})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("key mode %o", info.Mode().Perm())
+	}
+}

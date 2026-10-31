@@ -1,0 +1,333 @@
+// Package graphdb.v1 is the public wire contract for graphdb.
+// Value mirrors internal/value. Node and edge values are ids, matching
+// value.NodeRef and value.EdgeRef. Field numbers are stable in v1.
+syntax = "proto3";
+
+package graphdb.v1;
+
+option go_package = "github.com/shekhar8352/mini-graph-db/api/gen/graphdb/v1;graphdbv1";
+
+// QueryService runs GQL-lite. Execute streams one statement result at a time.
+// A script yields one group of messages per statement, tagged with statement_index.
+service QueryService {
+  rpc Execute(ExecuteRequest) returns (stream ExecuteResponse);
+  rpc ExecuteBatch(ExecuteBatchRequest) returns (stream ExecuteResponse);
+}
+
+// TransactionService keeps a server-side transaction for one connection.
+service TransactionService {
+  rpc Begin(BeginRequest) returns (BeginResponse);
+  rpc Commit(CommitRequest) returns (CommitResponse);
+  rpc Rollback(RollbackRequest) returns (RollbackResponse);
+  rpc Keepalive(KeepaliveRequest) returns (KeepaliveResponse);
+}
+
+// AdminService manages databases and the process. Authentication is Phase 7.
+service AdminService {
+  rpc CreateDatabase(CreateDatabaseRequest) returns (CreateDatabaseResponse);
+  rpc DropDatabase(DropDatabaseRequest) returns (DropDatabaseResponse);
+  rpc ListDatabases(ListDatabasesRequest) returns (ListDatabasesResponse);
+  rpc ListTransactions(ListTransactionsRequest) returns (ListTransactionsResponse);
+  rpc TerminateTransaction(TerminateTransactionRequest) returns (TerminateTransactionResponse);
+  rpc Checkpoint(CheckpointRequest) returns (CheckpointResponse);
+  rpc Vacuum(VacuumRequest) returns (VacuumResponse);
+  rpc Stats(StatsRequest) returns (StatsResponse);
+}
+
+// Value is one typed datum. An unset oneof is null.
+message Value {
+  oneof kind {
+    Null null_value = 1;
+    bool bool_value = 2;
+    int64 int_value = 3;
+    double float_value = 4;
+    string string_value = 5;
+    bytes bytes_value = 6;
+    Date date_value = 7;
+    DateTime datetime_value = 8;
+    Duration duration_value = 9;
+    List list_value = 10;
+    Map map_value = 11;
+    Node node_value = 12;
+    Edge edge_value = 13;
+    Path path_value = 14;
+  }
+}
+
+// Null is the unknown value. The message is empty; its presence is the signal.
+message Null {}
+
+// Date is a proleptic Gregorian calendar day.
+message Date {
+  int32 year = 1;
+  int32 month = 2;
+  int32 day = 3;
+}
+
+// DateTime is a UTC instant. zone_set records a fixed offset east of UTC.
+message DateTime {
+  int64 unix_nanos = 1;
+  bool zone_set = 2;
+  int32 offset_sec = 3;
+}
+
+// Duration stores months, days, and nanoseconds independently.
+message Duration {
+  int64 months = 1;
+  int64 days = 2;
+  int64 nanos = 3;
+}
+
+// List is an ordered sequence of values.
+message List {
+  repeated Value values = 1;
+}
+
+// Map is a string-keyed record. The server sorts keys by byte order.
+message Map {
+  repeated Entry entries = 1;
+}
+
+// Entry is one map pair.
+message Entry {
+  string key = 1;
+  Value value = 2;
+}
+
+// Node is a node id. Properties are not inlined.
+message Node {
+  uint64 id = 1;
+}
+
+// Edge is an edge id. Properties are not inlined.
+message Edge {
+  uint64 id = 1;
+}
+
+// Path is a sequence of node ids and the edges between them.
+message Path {
+  repeated uint64 nodes = 1;
+  repeated uint64 edges = 2;
+}
+
+// ExecuteRequest runs one script.
+// database empty uses the session database. txn_id empty uses the connection's
+// open transaction when one exists, and auto-commits otherwise.
+// timeout_ms zero uses the configured query timeout.
+message ExecuteRequest {
+  string database = 1;
+  string query = 2;
+  map<string, Value> params = 3;
+  string txn_id = 4;
+  int64 timeout_ms = 5;
+}
+
+// ExecuteBatchRequest runs queries in order with one parameter set.
+message ExecuteBatchRequest {
+  string database = 1;
+  repeated string queries = 2;
+  map<string, Value> params = 3;
+  string txn_id = 4;
+  int64 timeout_ms = 5;
+}
+
+// ExecuteResponse is one slice of a statement result.
+// rows holds at most max_rows_per_message values and stays under max_message_bytes.
+message ExecuteResponse {
+  int32 statement_index = 1;
+  oneof part {
+    Columns columns = 2;
+    Rows rows = 3;
+    Summary summary = 4;
+    Notification notification = 5;
+  }
+}
+
+// Columns names the fields of later rows.
+message Columns {
+  repeated string names = 1;
+}
+
+// Rows is a batch of result rows.
+message Rows {
+  repeated Row rows = 1;
+}
+
+// Row is one result row, aligned with Columns.
+message Row {
+  repeated Value values = 1;
+}
+
+// Summary counts the writes of one statement.
+message Summary {
+  int64 nodes_created = 1;
+  int64 nodes_deleted = 2;
+  int64 edges_created = 3;
+  int64 edges_deleted = 4;
+  int64 properties_set = 5;
+  int64 labels_added = 6;
+  int64 labels_removed = 7;
+  int64 indexes_added = 8;
+  int64 indexes_removed = 9;
+  int64 constraints_added = 10;
+  int64 constraints_removed = 11;
+  // txn_id is set when the connection has an open transaction after the statement.
+  string txn_id = 12;
+  repeated Operator profile = 13;
+}
+
+// Operator is one PROFILE line.
+message Operator {
+  string text = 1;
+  int32 depth = 2;
+  int64 rows = 3;
+  int64 db_hits = 4;
+  int64 time_nanos = 5;
+}
+
+// Notification is a notice attached to a statement, such as DeprecatedSyntax.
+message Notification {
+  string code = 1;
+  string message = 2;
+}
+
+// BeginRequest opens a transaction on database, or on the session database when empty.
+message BeginRequest {
+  string database = 1;
+  bool read_only = 2;
+}
+
+// BeginResponse names the server-side transaction.
+message BeginResponse {
+  string txn_id = 1;
+  string database = 2;
+}
+
+// CommitRequest commits txn_id. The id must belong to this connection.
+message CommitRequest {
+  string txn_id = 1;
+}
+
+// CommitResponse is empty. A nil error means the commit is durable when fsync is on.
+message CommitResponse {}
+
+// RollbackRequest aborts txn_id.
+message RollbackRequest {
+  string txn_id = 1;
+}
+
+// RollbackResponse is empty.
+message RollbackResponse {}
+
+// KeepaliveRequest refreshes the idle timer for txn_id.
+message KeepaliveRequest {
+  string txn_id = 1;
+}
+
+// KeepaliveResponse is empty.
+message KeepaliveResponse {}
+
+// CreateDatabaseRequest creates an empty database directory.
+message CreateDatabaseRequest {
+  string name = 1;
+}
+
+// CreateDatabaseResponse is empty.
+message CreateDatabaseResponse {}
+
+// DropDatabaseRequest moves a database to the trash directory.
+// confirm must be true. system and default are reserved.
+message DropDatabaseRequest {
+  string name = 1;
+  bool confirm = 2;
+}
+
+// DropDatabaseResponse is empty.
+message DropDatabaseResponse {}
+
+// ListDatabasesRequest asks for every database the catalog knows.
+message ListDatabasesRequest {}
+
+// ListDatabasesResponse lists databases in name order.
+message ListDatabasesResponse {
+  repeated Database databases = 1;
+}
+
+// Database is one catalog entry.
+message Database {
+  string name = 1;
+  int64 created_unix_nano = 2;
+}
+
+// ListTransactionsRequest asks for every server-side transaction.
+message ListTransactionsRequest {}
+
+// ListTransactionsResponse lists open transactions.
+message ListTransactionsResponse {
+  repeated TransactionInfo transactions = 1;
+}
+
+// TransactionInfo describes one open transaction.
+message TransactionInfo {
+  string id = 1;
+  string database = 2;
+  bool read_only = 3;
+  int64 age_nanos = 4;
+}
+
+// TerminateTransactionRequest rolls a transaction back.
+message TerminateTransactionRequest {
+  string id = 1;
+}
+
+// TerminateTransactionResponse is empty.
+message TerminateTransactionResponse {}
+
+// CheckpointRequest checkpoints one database. An empty name checkpoints every open database.
+message CheckpointRequest {
+  string database = 1;
+}
+
+// CheckpointResponse is empty.
+message CheckpointResponse {}
+
+// VacuumRequest removes versions no open snapshot can read.
+// An empty database name selects the session default, which is default.
+message VacuumRequest {
+  string database = 1;
+}
+
+// VacuumResponse reports how many version records were removed.
+message VacuumResponse {
+  int64 reclaimed = 1;
+}
+
+// StatsRequest asks for cardinality of one database. Empty selects default.
+message StatsRequest {
+  string database = 1;
+}
+
+// StatsResponse is a point-in-time cardinality snapshot.
+message StatsResponse {
+  string database = 1;
+  int64 nodes = 2;
+  int64 edges = 3;
+  repeated string labels = 4;
+  int64 keys = 5;
+  uint64 commits = 6;
+  uint64 rollbacks = 7;
+  uint64 versions_reclaimed = 8;
+}
+
+// ErrorInfo is attached to a gRPC status when the failure is a graphdb error.
+message ErrorInfo {
+  string code = 1;
+  bool retryable = 2;
+  Position position = 3;
+}
+
+// Position is the 1-based source location carried in a syntax or semantic error.
+message Position {
+  int32 line = 1;
+  int32 column = 2;
+}
