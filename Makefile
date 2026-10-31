@@ -11,7 +11,14 @@ BIN         := bin/graphdb
 GOLANGCI    ?= golangci-lint
 GOPATH_BIN  := $(shell $(GO) env GOPATH)/bin
 
-.PHONY: all build test lint fmt proto bench cover
+.PHONY: all build test lint fmt proto proto-check bench cover
+
+BUF         ?= buf
+PROTOC_GEN_GO := protoc-gen-go
+PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
+BUF_VERSION ?= v1.57.2
+PROTOC_GEN_GO_VERSION ?= v1.36.6
+PROTOC_GEN_GO_GRPC_VERSION ?= v1.5.1
 
 all: build test
 
@@ -39,7 +46,19 @@ fmt:
 		$(GO) run golang.org/x/tools/cmd/goimports@v0.37.0 -w -local $(MODULE) .
 
 proto:
-	@echo "proto generation is not implemented yet (Phase 6)"
+	@if ! command -v $(BUF) >/dev/null 2>&1; then \
+		$(GO) install github.com/bufbuild/buf/cmd/buf@$(BUF_VERSION); \
+	fi
+	@if ! command -v $(PROTOC_GEN_GO) >/dev/null 2>&1; then \
+		$(GO) install google.golang.org/protobuf/cmd/protoc-gen-go@$(PROTOC_GEN_GO_VERSION); \
+	fi
+	@if ! command -v $(PROTOC_GEN_GO_GRPC) >/dev/null 2>&1; then \
+		$(GO) install google.golang.org/grpc/cmd/protoc-gen-go-grpc@$(PROTOC_GEN_GO_GRPC_VERSION); \
+	fi
+	PATH="$(GOPATH_BIN):$$PATH" $(BUF) generate
+
+proto-check: proto
+	git diff --exit-code -- api/gen api/proto buf.yaml buf.gen.yaml
 
 bench:
 	$(GO) test -run=^$$ -bench=. -benchmem ./...
