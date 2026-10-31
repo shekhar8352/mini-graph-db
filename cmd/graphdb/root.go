@@ -30,14 +30,14 @@ func main() {
 func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "graphdb",
-		Short:         "Embedded property-graph database",
-		Long:          "graphdb is an embedded property-graph database with an interactive shell.",
+		Short:         "Property-graph database",
+		Long:          "graphdb is a property-graph database with an embedded shell and a gRPC server.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		// `graphdb` with no subcommand starts the shell (Phase 0 default).
 		RunE: runShell,
 	}
-	cmd.PersistentFlags().String(flagDataDir, defaultDataDir, "directory for the REPL history file")
+	cmd.PersistentFlags().String(flagDataDir, defaultDataDir, "data directory (shell history, or one subdirectory per database when serving)")
 	cmd.PersistentFlags().String(flagHistory, "", "REPL command history (default <data-dir>/graph.history)")
 	cmd.PersistentFlags().String(flagLogLevel, "info", "log level: debug, info, warn, error")
 	cmd.PersistentFlags().String(flagLogFormat, "text", "log format: text or json")
@@ -59,7 +59,7 @@ func newRootCmd() *cobra.Command {
 		return err
 	}
 
-	cmd.AddCommand(newShellCmd(), newMigrateCmd(), newVersionCmd())
+	cmd.AddCommand(newShellCmd(), newServerCmd(), newConfigCmd(), newAdminCmd(), newMigrateCmd(), newVersionCmd())
 	cmd.CompletionOptions.DisableDefaultCmd = true
 	return cmd
 }
