@@ -28,6 +28,7 @@ build:
 
 test:
 	$(GO) test -race -count=1 ./...
+	$(GO) test -count=1 -timeout 3m -run '^TestStreamMillionRows$$' ./internal/server
 
 lint:
 	@if command -v $(GOLANGCI) >/dev/null 2>&1; then \

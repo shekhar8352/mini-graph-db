@@ -8,18 +8,21 @@ The shell keeps the working set in RAM for one session. A durable database is a 
 make test
 go run ./cmd/graphdb          # defaults to the interactive shell
 go run ./cmd/graphdb version
+go run ./cmd/graphdb server   # gRPC on 127.0.0.1:9530, data in ./data/<database>/
 ```
+
+The server keeps one database per subdirectory of `--data-dir`, creates `default` on first start, and speaks plaintext on loopback. `graphdb config print-defaults` writes a `graphdb.toml`. See [docs/spec/server.md](docs/spec/server.md).
 
 Module path: `github.com/shekhar8352/mini-graph-db`. Docs live in [`docs/`](docs/README.md). The [roadmap](ROADMAP.md) is the plan for turning this into a networked, persistent graph database.
 
 | Flag | Default | Purpose |
 |------|---------|---------|
-| `--data-dir` | `./data` | Directory for the REPL history file |
+| `--data-dir` | `./data` | Shell history directory, or the server's database root |
 | `--history` | `<data-dir>/graph.history` | REPL command history (up-arrow) |
 | `--log-level` | `info` | `debug`, `info`, `warn`, or `error` |
 | `--log-format` | `text` | `text` or `json` |
 
-Commands: `graphdb` / `graphdb shell` start the REPL; `graphdb version` prints semver and git commit; `graphdb migrate --from-legacy <snapshot> [--wal <file>] --to <dir>` imports an old gob snapshot.
+Commands: `graphdb` / `graphdb shell` start the REPL; `graphdb server` serves gRPC; `graphdb config validate` and `graphdb config print-defaults` inspect configuration; `graphdb admin gen-cert` writes a local TLS certificate; `graphdb version` prints semver and git commit; `graphdb migrate --from-legacy <snapshot> [--wal <file>] --to <dir>` imports an old gob snapshot.
 In a real terminal the prompt supports line editing: left/right move the cursor, up/down walk history, Tab completes keywords, Ctrl-C cancels the current line, Ctrl-D or `EXIT` leaves the REPL. Piped input uses a plain scanner (no line editor).
 
 ---

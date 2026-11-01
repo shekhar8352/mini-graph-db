@@ -4,6 +4,31 @@ All notable work on this repository is recorded here. Task IDs match [ROADMAP.md
 
 ## Unreleased
 
+### Phase 6 — gRPC server, multi-database, configuration (2026-10-31)
+
+- **6.1** `api/proto/graphdb/v1` defines `QueryService`, `TransactionService`, and `AdminService`, plus a `Value` oneof that matches `internal/value`. `make proto` runs `buf generate`. CI checks that `api/gen` is up to date.
+- **6.2** `internal/server` maps `gerr` codes onto gRPC statuses with an `ErrorInfo` detail (code, retryable, position). Interceptors add a request id, a log line, in-process counters, and recover a panic as `Internal`.
+- **6.3** A connection holds at most one transaction. The id is a decimal string. Idle timeout and disconnect roll it back.
+- **6.4** `Execute` streams columns, row batches, notifications, and a summary. Batches honor `max_rows_per_message` and `max_message_bytes`.
+- **6.5** Each database is `data/<name>/`. `system` stores the directory catalog (kind `0x40`). `default` is created on first start. `DROP DATABASE name CONFIRM` moves the directory to `data/.trash/`. [ADR 0012](adr/0012-grpc-server.md).
+- **6.6** `internal/config` loads defaults, then `graphdb.toml`, then `GRAPHDB_*`, then flags. `graphdb config validate` and `graphdb config print-defaults` read that overlay.
+- **6.7** Non-loopback binds require TLS unless `--insecure-plaintext`. `graphdb admin gen-cert` writes a local self-signed certificate. `client_ca` turns on mTLS. `fsync = false` skips the WAL fsync and is logged.
+- **6.8** `graphdb server` writes a pid file, prints `listening <addr>`, and on `SIGTERM` drains up to `shutdown_timeout`, checkpoints, and closes.
+- **6.9** In-process tests cover the RPCs, transactions across calls, cancellation, and restart. The 1,000,000-row stream runs without the race detector, and `make test` runs it after the race suite. `test/integration/server` kills the process with `SIGKILL` and checks acknowledged commits.
+
+#### Policy compliance
+
+| Policy | This task |
+|--------|-----------|
+| P1 Durability | Commit still fsyncs the WAL before the RPC returns, unless `fsync` is false. That mode is logged at startup. `SIGKILL` after an acknowledged commit keeps the commit. |
+| P6 Security | TLS is required off loopback unless `--insecure-plaintext`. Authentication is not enforced yet and the server says so. Secrets are not part of the startup banner. |
+| P9 Resource governance | `max_connections`, `max_txn`, query timeout, query memory, and message size return `ResourceExhausted` or a deadline. The connection past the cap is refused with that code. |
+| P10 Change management | The page format stays version 1. Catalog kind `0x40` is additive and used only in `system`. |
+| P11 Availability | `SIGTERM` stops new calls, drains, checkpoints, and closes. A stale pid file is replaced only when that process is gone. |
+| P12 Testing | Server tests and the kill/restart integration test run under `go test -race`. The 1,000,000-row stream runs in the same `make test` target without the race detector. |
+| P13 Documentation | [spec/server.md](spec/server.md), ADR 0012, the query-language DCL note, and the README describe the server. |
+| P2–P5, P7, P8 | No change to snapshot isolation, page checksums, or recovery. Audit and Prometheus export wait for later phases. |
+
 ### Phase 5 — Schema, indexes, constraints, planner (2026-10-28)
 
 - **5.1** `internal/catalog` stores indexes, constraints, ANALYZE stats, and catalog format version 1 in the `C` keyspace (kinds `0x20`–`0x27`). Interned labels, edge types, property keys, and id counters stay in graphstore. Generation bumps on DDL.
