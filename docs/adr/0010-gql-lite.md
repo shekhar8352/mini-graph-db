@@ -18,7 +18,7 @@ The shell still parses one legacy statement per line. Phase 4 replaces that lang
 
 **Patterns are relationship-isomorphic.** An edge is used at most once in a match. Nodes may repeat. Variable-length walks are at least one hop and stop at `max_pattern_hops` (default 128). `shortestPath` breaks ties by the lexicographically smallest edge-id sequence.
 
-**Labels and types in patterns are names, not expressions.** A parameter can supply a property value. It cannot supply a label, a relationship type, or a property key. DDL and DCL are in the grammar now. Index and constraint enforcement is Phase 5. Database, user, and grant enforcement is Phase 6 and Phase 7.
+**Labels and types in patterns are names, not expressions.** A parameter can supply a property value. It cannot supply a label, a relationship type, or a property key. DDL and DCL are in the grammar now. Index and constraint enforcement is Phase 5. The gRPC server executes database statements (Phase 6). User and grant enforcement is Phase 7. The embedded shell still returns `Unavailable` for database statements.
 
 ## Alternatives considered
 
