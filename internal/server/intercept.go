@@ -36,11 +36,13 @@ type Metrics struct {
 	Nanos    atomic.Int64
 }
 
+// TagConn implements grpc/stats.Handler. It stamps the connection id onto ctx.
 func (h *Host) TagConn(ctx context.Context, _ *stats.ConnTagInfo) context.Context {
 	st := &connState{id: h.nextConn.Add(1)}
 	return context.WithValue(ctx, connKey, st)
 }
 
+// HandleConn implements grpc/stats.Handler. The connection past max_connections is rejected.
 func (h *Host) HandleConn(ctx context.Context, s stats.ConnStats) {
 	st, _ := ctx.Value(connKey).(*connState)
 	switch s.(type) {
@@ -57,8 +59,10 @@ func (h *Host) HandleConn(ctx context.Context, s stats.ConnStats) {
 	}
 }
 
+// TagRPC implements grpc/stats.Handler. Deadlines are applied by the interceptors.
 func (h *Host) TagRPC(ctx context.Context, _ *stats.RPCTagInfo) context.Context { return ctx }
 
+// HandleRPC implements grpc/stats.Handler. Per-call counters live in the interceptors.
 func (h *Host) HandleRPC(context.Context, stats.RPCStats) {}
 
 func (h *Host) sessionFrom(ctx context.Context) (*Session, error) {

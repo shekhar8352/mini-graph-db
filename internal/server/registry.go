@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -70,10 +71,10 @@ func (r *registry) session(id uint64, h *Host) *Session {
 	return s
 }
 
-func (r *registry) add(tx *openTx, max int) error {
+func (r *registry) add(tx *openTx, limit int) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if len(r.txs) >= max {
+	if len(r.txs) >= limit {
 		return gerr.New(gerr.ResourceExhausted, "too many open transactions")
 	}
 	r.txs[tx.id] = tx
@@ -120,7 +121,9 @@ func (r *registry) dropConn(id uint64) {
 		return
 	}
 	s.mu.Lock()
-	s.finishRollback()
+	if err := s.finishRollback(); err != nil {
+		slog.Warn("rollback on disconnect", "err", err, "conn", id)
+	}
 	s.mu.Unlock()
 }
 
@@ -133,7 +136,9 @@ func (r *registry) rollbackAll() {
 	r.mu.Unlock()
 	for _, s := range sessions {
 		s.mu.Lock()
-		s.finishRollback()
+		if err := s.finishRollback(); err != nil {
+			slog.Warn("rollback on shutdown", "err", err, "conn", s.conn)
+		}
 		s.mu.Unlock()
 	}
 }
