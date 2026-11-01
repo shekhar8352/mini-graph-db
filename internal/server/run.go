@@ -156,7 +156,7 @@ func (s *Session) use(name string, current *string) (*exec.Result, error) {
 }
 
 func (s *Session) showDatabases() *exec.Result {
-	list := s.host.ListDatabases()
+	list := s.host.listDatabases()
 	rows := make([][]value.Value, len(list))
 	for i, db := range list {
 		rows[i] = []value.Value{value.String(db.name)}

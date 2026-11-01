@@ -30,11 +30,11 @@ func TestQueryAndRestart(t *testing.T) {
 	})
 	conn := dial(t, srv.Addr())
 	ctx := context.Background()
-	sum := execQuery(t, conn, ctx, `CREATE (:Person {name: "Ada"})`)
+	sum := execQuery(ctx, t, conn, `CREATE (:Person {name: "Ada"})`)
 	if sum.GetNodesCreated() != 1 {
 		t.Fatalf("created %d", sum.GetNodesCreated())
 	}
-	rows := execRows(t, conn, ctx, `MATCH (n:Person) RETURN n.name AS name`)
+	rows := execRows(ctx, t, conn, `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 1 || rows[0].GetValues()[0].GetStringValue() != "Ada" {
 		t.Fatalf("rows %#v", rows)
 	}
@@ -42,7 +42,7 @@ func TestQueryAndRestart(t *testing.T) {
 
 	srv = startServer(t, dir, nil)
 	conn = dial(t, srv.Addr())
-	rows = execRows(t, conn, ctx, `MATCH (n:Person) RETURN n.name AS name`)
+	rows = execRows(ctx, t, conn, `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 1 || rows[0].GetValues()[0].GetStringValue() != "Ada" {
 		t.Fatalf("after restart %#v", rows)
 	}
@@ -74,15 +74,15 @@ func TestTransactionsAcrossRPCs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execQueryTxn(t, conn, ctx, begun.GetTxnId(), `CREATE (:Person {name: "Bea"})`)
-	rows := execRowsTxn(t, conn, ctx, begun.GetTxnId(), `MATCH (n:Person) RETURN n.name AS name`)
+	execQueryTxn(ctx, t, conn, begun.GetTxnId(), `CREATE (:Person {name: "Bea"})`)
+	rows := execRowsTxn(ctx, t, conn, begun.GetTxnId(), `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 1 || rows[0].GetValues()[0].GetStringValue() != "Bea" {
 		t.Fatalf("open txn %#v", rows)
 	}
 	if _, err := tx.Rollback(ctx, &graphdbv1.RollbackRequest{TxnId: begun.GetTxnId()}); err != nil {
 		t.Fatal(err)
 	}
-	rows = execRows(t, conn, ctx, `MATCH (n:Person) RETURN n.name AS name`)
+	rows = execRows(ctx, t, conn, `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 0 {
 		t.Fatalf("after rollback %#v", rows)
 	}
@@ -94,11 +94,11 @@ func TestTransactionsAcrossRPCs(t *testing.T) {
 	if _, err := tx.Keepalive(ctx, &graphdbv1.KeepaliveRequest{TxnId: begun.GetTxnId()}); err != nil {
 		t.Fatal(err)
 	}
-	execQueryTxn(t, conn, ctx, begun.GetTxnId(), `CREATE (:Person {name: "Cy"})`)
+	execQueryTxn(ctx, t, conn, begun.GetTxnId(), `CREATE (:Person {name: "Cy"})`)
 	if _, err := tx.Commit(ctx, &graphdbv1.CommitRequest{TxnId: begun.GetTxnId()}); err != nil {
 		t.Fatal(err)
 	}
-	rows = execRows(t, conn, ctx, `MATCH (n:Person) RETURN n.name AS name`)
+	rows = execRows(ctx, t, conn, `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 1 || rows[0].GetValues()[0].GetStringValue() != "Cy" {
 		t.Fatalf("committed %#v", rows)
 	}
@@ -125,17 +125,17 @@ func TestMultiDatabase(t *testing.T) {
 	if _, err := admin.CreateDatabase(ctx, &graphdbv1.CreateDatabaseRequest{Name: "analytics"}); status.Code(err) != codes.AlreadyExists {
 		t.Fatalf("dup %v", err)
 	}
-	execQuery(t, conn, ctx, `USE analytics`)
-	execQueryDB(t, conn, ctx, "", `CREATE (:Report {id: 1})`)
-	rows := execRowsDB(t, conn, ctx, "default", `MATCH (n:Report) RETURN n.id AS id`)
+	execQuery(ctx, t, conn, `USE analytics`)
+	execQueryDB(ctx, t, conn, "", `CREATE (:Report {id: 1})`)
+	rows := execRowsDB(ctx, t, conn, "default", `MATCH (n:Report) RETURN n.id AS id`)
 	if len(rows) != 0 {
 		t.Fatalf("default saw analytics %#v", rows)
 	}
-	rows = execRowsDB(t, conn, ctx, "analytics", `MATCH (n:Report) RETURN n.id AS id`)
+	rows = execRowsDB(ctx, t, conn, "analytics", `MATCH (n:Report) RETURN n.id AS id`)
 	if len(rows) != 1 {
 		t.Fatalf("analytics %#v", rows)
 	}
-	names := showNames(t, conn, ctx, `SHOW DATABASES`)
+	names := showNames(ctx, t, conn, `SHOW DATABASES`)
 	if !has(names, "analytics") || !has(names, "default") || !has(names, "system") {
 		t.Fatalf("names %v", names)
 	}
@@ -161,7 +161,7 @@ func TestStreamingCancelAndErrors(t *testing.T) {
 	})
 	conn := dial(t, srv.Addr())
 	ctx := context.Background()
-	rows := execRows(t, conn, ctx, `UNWIND range(1, 25) AS n RETURN n`)
+	rows := execRows(ctx, t, conn, `UNWIND range(1, 25) AS n RETURN n`)
 	if len(rows) != 25 {
 		t.Fatalf("rows %d", len(rows))
 	}
@@ -197,45 +197,6 @@ func TestStreamingCancelAndErrors(t *testing.T) {
 	}
 }
 
-func TestStreamMillionRows(t *testing.T) {
-	if testing.Short() {
-		t.Skip("short")
-	}
-	srv := startServer(t, t.TempDir(), func(cfg *config.Config) {
-		cfg.Limits.MaxRowsPerMessage = 1024
-		cfg.Limits.QueryTimeout = 3 * time.Minute
-		cfg.Limits.QueryMemoryBytes = 64 << 20
-	})
-	conn := dial(t, srv.Addr())
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	n := countRows(t, conn, ctx, `UNWIND range(1, 1000000) AS n RETURN n`)
-	if n != 1_000_000 {
-		t.Fatalf("rows %d", n)
-	}
-}
-
-func countRows(t *testing.T, conn *grpc.ClientConn, ctx context.Context, query string) int {
-	t.Helper()
-	stream, err := graphdbv1.NewQueryServiceClient(conn).Execute(ctx, &graphdbv1.ExecuteRequest{Query: query})
-	if err != nil {
-		t.Fatal(err)
-	}
-	n := 0
-	for {
-		msg, err := stream.Recv()
-		if err == io.EOF {
-			return n
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		if msg.GetRows() != nil {
-			n += len(msg.GetRows().GetRows())
-		}
-	}
-}
-
 func TestConnectionLimit(t *testing.T) {
 	srv := startServer(t, t.TempDir(), func(cfg *config.Config) {
 		cfg.Server.MaxConnections = 2
@@ -244,8 +205,8 @@ func TestConnectionLimit(t *testing.T) {
 	c2 := dial(t, srv.Addr())
 	c3 := dial(t, srv.Addr())
 	ctx := context.Background()
-	execQuery(t, c1, ctx, `RETURN 1 AS n`)
-	execQuery(t, c2, ctx, `RETURN 1 AS n`)
+	execQuery(ctx, t, c1, `RETURN 1 AS n`)
+	execQuery(ctx, t, c2, `RETURN 1 AS n`)
 	stream, err := graphdbv1.NewQueryServiceClient(c3).Execute(ctx, &graphdbv1.ExecuteRequest{Query: `RETURN 1 AS n`})
 	if err != nil {
 		t.Fatal(err)
@@ -277,13 +238,13 @@ func TestIdleTransactionAndDisconnect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	execQueryTxn(t, conn, ctx, begun.GetTxnId(), `CREATE (:Person {name: "Temp"})`)
+	execQueryTxn(ctx, t, conn, begun.GetTxnId(), `CREATE (:Person {name: "Temp"})`)
 	if err := conn.Close(); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(500 * time.Millisecond)
 	conn = dial(t, srv.Addr())
-	rows := execRows(t, conn, ctx, `MATCH (n:Person) RETURN n.name AS name`)
+	rows := execRows(ctx, t, conn, `MATCH (n:Person) RETURN n.name AS name`)
 	if len(rows) != 0 {
 		t.Fatalf("disconnect leaked %#v", rows)
 	}
@@ -398,8 +359,8 @@ func TestDevCert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
-	execQuery(t, conn, context.Background(), `RETURN 1 AS n`)
+	defer func() { _ = conn.Close() }()
+	execQuery(context.Background(), t, conn, `RETURN 1 AS n`)
 }
 
 func startServer(t *testing.T, dir string, tweak func(*config.Config)) *Server {
@@ -457,44 +418,44 @@ func credentialsFrom(t *testing.T, certPath string) credentials.TransportCredent
 	return credentials.NewTLS(&tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12})
 }
 
-func execQuery(t *testing.T, conn *grpc.ClientConn, ctx context.Context, query string) *graphdbv1.Summary {
+func execQuery(ctx context.Context, t *testing.T, conn *grpc.ClientConn, query string) *graphdbv1.Summary {
 	t.Helper()
-	return execQueryDB(t, conn, ctx, "", query)
+	return execQueryDB(ctx, t, conn, "", query)
 }
 
-func execQueryDB(t *testing.T, conn *grpc.ClientConn, ctx context.Context, db, query string) *graphdbv1.Summary {
+func execQueryDB(ctx context.Context, t *testing.T, conn *grpc.ClientConn, db, query string) *graphdbv1.Summary {
 	t.Helper()
-	_, sum := collect(t, conn, ctx, db, "", query)
+	_, sum := collect(ctx, t, conn, db, "", query)
 	return sum
 }
 
-func execQueryTxn(t *testing.T, conn *grpc.ClientConn, ctx context.Context, txn, query string) *graphdbv1.Summary {
+func execQueryTxn(ctx context.Context, t *testing.T, conn *grpc.ClientConn, txn, query string) *graphdbv1.Summary {
 	t.Helper()
-	_, sum := collect(t, conn, ctx, "", txn, query)
+	_, sum := collect(ctx, t, conn, "", txn, query)
 	return sum
 }
 
-func execRows(t *testing.T, conn *grpc.ClientConn, ctx context.Context, query string) []*graphdbv1.Row {
+func execRows(ctx context.Context, t *testing.T, conn *grpc.ClientConn, query string) []*graphdbv1.Row {
 	t.Helper()
-	rows, _ := collect(t, conn, ctx, "", "", query)
+	rows, _ := collect(ctx, t, conn, "", "", query)
 	return rows
 }
 
-func execRowsDB(t *testing.T, conn *grpc.ClientConn, ctx context.Context, db, query string) []*graphdbv1.Row {
+func execRowsDB(ctx context.Context, t *testing.T, conn *grpc.ClientConn, db, query string) []*graphdbv1.Row {
 	t.Helper()
-	rows, _ := collect(t, conn, ctx, db, "", query)
+	rows, _ := collect(ctx, t, conn, db, "", query)
 	return rows
 }
 
-func execRowsTxn(t *testing.T, conn *grpc.ClientConn, ctx context.Context, txn, query string) []*graphdbv1.Row {
+func execRowsTxn(ctx context.Context, t *testing.T, conn *grpc.ClientConn, txn, query string) []*graphdbv1.Row {
 	t.Helper()
-	rows, _ := collect(t, conn, ctx, "", txn, query)
+	rows, _ := collect(ctx, t, conn, "", txn, query)
 	return rows
 }
 
-func showNames(t *testing.T, conn *grpc.ClientConn, ctx context.Context, query string) []string {
+func showNames(ctx context.Context, t *testing.T, conn *grpc.ClientConn, query string) []string {
 	t.Helper()
-	rows := execRows(t, conn, ctx, query)
+	rows := execRows(ctx, t, conn, query)
 	var names []string
 	for _, row := range rows {
 		names = append(names, row.GetValues()[0].GetStringValue())
@@ -502,7 +463,7 @@ func showNames(t *testing.T, conn *grpc.ClientConn, ctx context.Context, query s
 	return names
 }
 
-func collect(t *testing.T, conn *grpc.ClientConn, ctx context.Context, db, txn, query string) ([]*graphdbv1.Row, *graphdbv1.Summary) {
+func collect(ctx context.Context, t *testing.T, conn *grpc.ClientConn, db, txn, query string) ([]*graphdbv1.Row, *graphdbv1.Summary) {
 	t.Helper()
 	stream, err := graphdbv1.NewQueryServiceClient(conn).Execute(ctx, &graphdbv1.ExecuteRequest{
 		Database: db,

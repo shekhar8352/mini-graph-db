@@ -95,7 +95,7 @@ func TestKill9Restart(t *testing.T) {
 		}
 	}()
 	conn = dial(t, addr)
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	got := map[string]bool{}
 	for _, row := range rows(t, conn, `MATCH (n:Person) RETURN n.name AS name`) {
 		got[row.GetValues()[0].GetStringValue()] = true

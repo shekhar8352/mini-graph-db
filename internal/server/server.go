@@ -1,3 +1,4 @@
+// Package server serves the graph database over gRPC.
 package server
 
 import (

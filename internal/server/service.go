@@ -113,7 +113,7 @@ func (a *adminServer) DropDatabase(_ context.Context, req *graphdbv1.DropDatabas
 }
 
 func (a *adminServer) ListDatabases(context.Context, *graphdbv1.ListDatabasesRequest) (*graphdbv1.ListDatabasesResponse, error) {
-	list := a.host.ListDatabases()
+	list := a.host.listDatabases()
 	out := &graphdbv1.ListDatabasesResponse{Databases: make([]*graphdbv1.Database, len(list))}
 	for i, db := range list {
 		out.Databases[i] = &graphdbv1.Database{Name: db.name, CreatedUnixNano: db.created}
@@ -164,7 +164,7 @@ func (a *adminServer) Vacuum(ctx context.Context, req *graphdbv1.VacuumRequest) 
 }
 
 func (a *adminServer) Stats(_ context.Context, req *graphdbv1.StatsRequest) (*graphdbv1.StatsResponse, error) {
-	st, err := a.host.Stats(req.GetDatabase())
+	st, err := a.host.stats(req.GetDatabase())
 	if err != nil {
 		return nil, err
 	}
