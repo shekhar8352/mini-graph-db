@@ -1,5 +1,5 @@
 // Package gerr defines the typed error taxonomy used across graphdb layers.
-// Codes are stable strings and will map to gRPC status codes in Phase 6.
+// Codes are stable strings. The gRPC server maps them onto status codes.
 package gerr
 
 import (

@@ -81,7 +81,7 @@ func decodeConstraint(name string, raw []byte) (Constraint, error) {
 	if err != nil {
 		return Constraint{}, err
 	}
-	c.IndexName, rest, err = takeString(rest)
+	c.IndexName, _, err = takeString(rest)
 	if err != nil {
 		return Constraint{}, err
 	}

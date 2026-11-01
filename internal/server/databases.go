@@ -222,8 +222,8 @@ func (h *Host) DropDatabase(name string, confirm bool) error {
 	return nil
 }
 
-// ListDatabases returns every catalogued database, sorted by name.
-func (h *Host) ListDatabases() []dbInfo {
+// listDatabases returns every catalogued database, sorted by name.
+func (h *Host) listDatabases() []dbInfo {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	out := make([]dbInfo, 0, len(h.dbs))
@@ -348,8 +348,8 @@ func (h *Host) Vacuum(ctx context.Context, name string) (uint64, error) {
 	return db.mgr.Vacuum(ctx)
 }
 
-// Stats reads cardinality for one database. An empty name selects default.
-func (h *Host) Stats(name string) (dbStats, error) {
+// stats reads cardinality for one database. An empty name selects default.
+func (h *Host) stats(name string) (dbStats, error) {
 	if name == "" {
 		name = "default"
 	}

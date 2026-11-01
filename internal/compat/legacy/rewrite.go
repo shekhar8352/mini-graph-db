@@ -44,13 +44,14 @@ func Compile(src string) (Result, error) {
 	}
 	stmt, err := query.Parse(src)
 	if err != nil {
-		if script, v2err := parser.Parse(src); v2err == nil {
+		script, v2err := parser.Parse(src)
+		if v2err == nil {
 			return Result{Source: src, Script: script}, nil
-		} else if looksLegacy(src) {
-			return Result{}, err
-		} else {
-			return Result{}, v2err
 		}
+		if looksLegacy(src) {
+			return Result{}, err
+		}
+		return Result{}, v2err
 	}
 	return rewriteStmt(stmt)
 }

@@ -151,7 +151,8 @@ func (e *engine) declaredSeek(seek *plan.IndexSeek, seed row) ([]uint64, error) 
 		if seek.Prefix == nil {
 			return nil, nil
 		}
-		v, err := expr.Eval(seek.Prefix, env)
+		var v value.Value
+		v, err = expr.Eval(seek.Prefix, env)
 		if err != nil {
 			return nil, err
 		}
@@ -164,14 +165,16 @@ func (e *engine) declaredSeek(seek *plan.IndexSeek, seed row) ([]uint64, error) 
 		var lo, hi []value.Value
 		loInc, hiInc := seek.LowInc, seek.HighInc
 		if seek.Low != nil {
-			v, err := expr.Eval(seek.Low, env)
+			var v value.Value
+			v, err = expr.Eval(seek.Low, env)
 			if err != nil {
 				return nil, err
 			}
 			lo = []value.Value{v}
 		}
 		if seek.High != nil {
-			v, err := expr.Eval(seek.High, env)
+			var v value.Value
+			v, err = expr.Eval(seek.High, env)
 			if err != nil {
 				return nil, err
 			}
@@ -179,15 +182,17 @@ func (e *engine) declaredSeek(seek *plan.IndexSeek, seed row) ([]uint64, error) 
 		}
 		ids, err = e.g.IndexRange(seek.Name, lo, hi, loInc, hiInc)
 	default:
-		sch, err := e.g.Schema()
-		if err != nil {
-			return nil, err
+		sch, schErr := e.g.Schema()
+		if schErr != nil {
+			return nil, schErr
 		}
 		ix, ok := sch.IndexByName(seek.Name)
 		if !ok {
 			return e.labelIDs(seek.Node), nil
 		}
-		vals, complete, err := e.indexVals(ix.Props, seek.Node, env)
+		var vals []value.Value
+		var complete bool
+		vals, complete, err = e.indexVals(ix.Props, seek.Node, env)
 		if err != nil {
 			return nil, err
 		}
