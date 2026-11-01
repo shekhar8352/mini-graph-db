@@ -16,6 +16,13 @@ Copied from the roadmap so they are not "fixed" opportunistically:
 - Encryption at rest (rely on filesystem/volume encryption; document in Phase 8).
 - Graph algorithms library (PageRank, community detection) — traversal and shortest paths only.
 
+## Discovered during Phase 6
+
+- The executor materializes every row before `Execute` streams them, so client backpressure does not bound server memory.
+- RPC counters stay in the process. Prometheus scrape is Phase 8.
+- Authentication is not enforced. Phase 7 adds it. Until then the server logs that it is off.
+- A data directory that is itself one engine (the target of `graphdb migrate --to`) is not adopted as a named database. The server expects `data/<name>/`.
+
 ## Discovered during Phase 5
 
 - Online, batched index build with `POPULATING`/`FAILED` and catch-up of concurrent writes ([ADR 0011](adr/0011-index-build.md)).

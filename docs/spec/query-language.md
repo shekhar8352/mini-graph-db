@@ -578,7 +578,7 @@ The parenthesized variable in `FOR` and the variable in `ON` or `REQUIRE` are th
 
 ## DCL
 
-These statements are in the grammar. Authentication and authorization are Phase 7. Multi-database execution is Phase 6. Until those phases, executing them is `Unavailable`, except `SHOW` forms that only read names the catalog already has.
+These statements are in the grammar. The gRPC server executes `CREATE DATABASE`, `DROP DATABASE`, `USE`, and `SHOW DATABASES`. The embedded shell has no multi-database catalog, so those statements stay `Unavailable` there. Authentication, users, roles, grants, and tokens are Phase 7, and executing them is `Unavailable`. `SHOW` forms that only read names the catalog already has still run in both places.
 
 A database name matches `[a-z][a-z0-9_]{0,62}`. `system` and `default` are reserved, compared case-insensitively. `DROP DATABASE name` without `CONFIRM` is `Semantic`. User names, role names, and other database names are stored as written.
 
@@ -606,7 +606,7 @@ Syntax and semantic errors include `at L:C` in the message, pointing at the star
 | Hop limit, query memory budget, query timeout | `ResourceExhausted` |
 | Unknown `DROP` target, unknown transaction id | `NotFound` |
 | `CREATE` of an index, constraint, database, user, or role that exists | `AlreadyExists` |
-| DCL executed before Phase 6 or Phase 7 wires it up | `Unavailable` |
+| Database statements in the embedded shell; user, role, grant, and token statements | `Unavailable` |
 | Authentication and authorization failures | `Unauthenticated`, `PermissionDenied` |
 | A panic recovered by the server | `Internal` |
 
